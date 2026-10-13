@@ -116,7 +116,7 @@ sequenceDiagram
     S->>T: invoke (Read → auto-run)
     T-->>S: result JSON
     S->>L: tool result
-    L-->>S: call set_order_priority(WO-1003, High)
+    L-->>S: call set_work_order_priority(WO-1003, High)
     S-->>P: approval request (Write)
     P-->>U: "Claude wants to set WO-1003 priority → High. [Approve] [Deny]"
     U->>P: Approve
@@ -136,11 +136,13 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    start([Chat request]) --> pol{Machine policy<br/>HKLM / env var set?}
-    pol -- yes --> usepol[Use policy-provided<br/>key or gateway URL]
-    pol -- no --> user{User key stored?<br/>DPAPI, CurrentUser}
+    start([Chat request]) --> gw{IT gateway policy?<br/>HKLM\Software\Policies}
+    gw -- yes --> usegw[Use gateway URL<br/>+ optional token]
+    gw -- no --> env{ANTHROPIC_API_KEY /<br/>OPENAI_API_KEY set?}
+    env -- yes --> useenv[Use environment key]
+    env -- no --> user{User key stored?<br/>DPAPI, CurrentUser}
     user -- yes --> useuser[Use user key]
-    user -- no --> prompt[Show 'Set up AI' card<br/>— no network call made]
+    user -- no --> prompt["Show 'Set up AI' card<br/>no network call made"]
 ```
 
 Supported credential sources, in precedence order (see [ADR-003](adr/003-credential-handling.md)):
