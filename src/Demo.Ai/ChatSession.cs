@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI;
 namespace Demo.Ai;
 
 /// <summary>A write the model wants to make, waiting for the user's decision.</summary>
-public sealed record ApprovalRequest(Capability Capability, IReadOnlyDictionary<string, object?> Arguments)
+public sealed record ApprovalRequest(string CallId, Capability Capability, IReadOnlyDictionary<string, object?> Arguments)
 {
     public string ArgumentsJson => JsonSerializer.Serialize(Arguments, CapabilityCatalog.SerializerOptions);
 }
@@ -21,6 +21,7 @@ public sealed record ChatSessionOptions
         Tools that change data ask the user for approval before they run. If the user declines, accept it and suggest alternatives.
         If a tool returns an "error", explain it plainly to the user.
         Keep answers short and practical. Refer to work orders and parts by their ids.
+        The chat panel displays plain text, so do not use Markdown formatting.
         """;
 
     public string SystemPrompt { get; init; } = DefaultSystemPrompt;
@@ -91,7 +92,7 @@ public sealed class ChatSession
             foreach (var request in pending)
             {
                 var call = (FunctionCallContent)request.ToolCall;
-                var approved = await approve(new ApprovalRequest(_catalog[call.Name], call.Arguments?.AsReadOnly() ?? EmptyArguments), cancellationToken);
+                var approved = await approve(new ApprovalRequest(call.CallId, _catalog[call.Name], call.Arguments?.AsReadOnly() ?? EmptyArguments), cancellationToken);
                 decisions.Add(request.CreateResponse(approved, approved ? null : "The user declined this action."));
             }
             Append(new ChatMessage(ChatRole.User, decisions), turn);
@@ -101,9 +102,13 @@ public sealed class ChatSession
 
     private static readonly IReadOnlyDictionary<string, object?> EmptyArguments = new Dictionary<string, object?>();
 
+    /// <summary>Raised for each message as it joins the conversation, so a UI can render progressively.</summary>
+    public event Action<ChatMessage>? MessageAdded;
+
     private void Append(ChatMessage message, List<ChatMessage> turn)
     {
         _history.Add(message);
         turn.Add(message);
+        MessageAdded?.Invoke(message);
     }
 }

@@ -1,12 +1,140 @@
-﻿<Window x:Class="Demo.Desktop.MainWindow"
+<Window x:Class="Demo.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Demo.Desktop"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="{Binding Title}" Width="1400" Height="760" MinWidth="900" MinHeight="560"
+        Background="{StaticResource Surface}" WindowStartupLocation="CenterScreen"
+        AutomationProperties.AutomationId="MainWindow">
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="52"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="28"/>
+        </Grid.RowDefinitions>
 
+        <!-- Header -->
+        <Border Background="{StaticResource Chrome}">
+            <DockPanel Margin="16,0" LastChildFill="False">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="⚙" Foreground="#93C5FD" FontSize="20" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource ChromeButton}" Command="{Binding ToggleChatCommand}"
+                            Visibility="{Binding IsChatAvailable, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.AutomationId="AssistantButton" Content="✦  Assistant"/>
+                    <Button Style="{StaticResource ChromeButton}" Command="{Binding OpenSettingsCommand}"
+                            AutomationProperties.AutomationId="SettingsButton" Content="Settings"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Body: legacy UI on the left, assistant panel on the right -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TabControl Margin="12" SelectedIndex="{Binding SelectedTabIndex}" Padding="0" BorderBrush="{StaticResource Border}">
+                <TabItem Header="  Work orders  " AutomationProperties.AutomationId="OrdersTab">
+                    <Grid Background="White">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="250"/>
+                        </Grid.ColumnDefinitions>
+                        <DataGrid ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder}" BorderThickness="0"
+                                  AutomationProperties.AutomationId="OrdersGrid">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="70"/>
+                                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*" MinWidth="200"/>
+                                <DataGridTextColumn Header="Customer" Binding="{Binding Customer}" Width="125"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
+                                <DataGridTextColumn Header="Priority" Binding="{Binding Priority}" Width="75"/>
+                                <DataGridTextColumn Header="Due" Binding="{Binding DueDate, StringFormat=yyyy-MM-dd}" Width="90"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Border Grid.Column="1" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="SELECTED ORDER" Style="{StaticResource SectionLabel}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding SelectedOrder.Id, FallbackValue='—'}" FontSize="18" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding SelectedOrder.Title}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                <TextBlock Text="{Binding SelectedOrder.CompletionNote}" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+
+                                <TextBlock Text="PRIORITY" Style="{StaticResource SectionLabel}"/>
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource PlainButton}" Content="Apply" Margin="6,0,0,0"
+                                            Command="{Binding SetPriorityCommand}"/>
+                                    <ComboBox ItemsSource="{Binding Priorities}" SelectedItem="{Binding EditPriority}"/>
+                                </DockPanel>
+
+                                <TextBlock Text="COMPLETE WITH NOTE" Style="{StaticResource SectionLabel}"/>
+                                <TextBox Text="{Binding CompletionNote, UpdateSourceTrigger=PropertyChanged}" Height="54" TextWrapping="Wrap" AcceptsReturn="True"/>
+                                <Button Style="{StaticResource PlainButton}" Content="Mark completed" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                        Command="{Binding CompleteOrderCommand}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </TabItem>
+                <TabItem Header="  Parts  " AutomationProperties.AutomationId="PartsTab">
+                    <Grid Background="White">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="250"/>
+                        </Grid.ColumnDefinitions>
+                        <DataGrid ItemsSource="{Binding Parts}" SelectedItem="{Binding SelectedPart}" BorderThickness="0"
+                                  AutomationProperties.AutomationId="PartsGrid">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="On hand" Binding="{Binding OnHand}" Width="80"/>
+                                <DataGridTextColumn Header="Reorder at" Binding="{Binding ReorderLevel}" Width="80"/>
+                                <DataGridCheckBoxColumn Header="Low" Binding="{Binding IsLow, Mode=OneWay}" Width="50"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Border Grid.Column="1" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="ADJUST STOCK" Style="{StaticResource SectionLabel}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding SelectedPart.Name, FallbackValue='Select a part'}" FontWeight="SemiBold"/>
+                                <TextBlock Text="QUANTITY (+/−)" Style="{StaticResource SectionLabel}"/>
+                                <TextBox Text="{Binding StockDelta}"/>
+                                <TextBlock Text="REASON" Style="{StaticResource SectionLabel}"/>
+                                <TextBox Text="{Binding StockReason, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Style="{StaticResource PlainButton}" Content="Adjust" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                        Command="{Binding AdjustStockCommand}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <local:ChatPanel Grid.Column="1" Width="390" DataContext="{Binding Chat}"
+                             Visibility="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
+        </Grid>
+
+        <!-- Status bar: always shows whether agents can reach this app -->
+        <Border Grid.Row="2" Background="#E9ECF0" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="12,0" LastChildFill="False">
+                <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="11.5"
+                           Text="{Binding DataPath, StringFormat='Data: {0}'}"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Mcp.LastActivity}" Foreground="{StaticResource Accent}" FontSize="11.5" Margin="0,0,14,0"
+                               AutomationProperties.AutomationId="McpActivity"/>
+                    <Ellipse Width="8" Height="8" Margin="0,0,6,0">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="#9CA3AF"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Mcp.IsRunning}" Value="True">
+                                        <Setter Property="Fill" Value="#16A34A"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+                    <TextBlock Text="{Binding Mcp.Status}" FontSize="11.5" AutomationProperties.AutomationId="McpStatus"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>

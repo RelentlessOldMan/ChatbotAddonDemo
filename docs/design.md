@@ -204,16 +204,26 @@ Full notes: [security.md](security.md).
 | Domain | Unit tests | No |
 | Capabilities | Each capability against an in-memory domain; schema snapshot; safety-class assertions | No |
 | AI | `ChatSession` against a **scripted fake `IChatClient`** (tool calls, approvals, denials, caps, cost); credential store round-trip | No |
-| AI (live) | Smoke test per provider, **skipped unless a key is present** | Yes (opt-in) |
-| MCP | Real MCP client (`ModelContextProtocol` SDK) against: the stdio server (spawns `Demo.Cli mcp`), and the HTTP server (in-process); verifies tool list, annotations, policy, auth rejection | No |
-| UI | FlaUI drives the WPF app in `--demo` mode | No |
+| AI (live) | Smoke test per provider. **Skipped unless `DEMO_LIVE_TESTS=1`**, because developers often have keys in their environment and that alone must not spend money | Yes (opt-in) |
+| MCP | Real MCP client (`ModelContextProtocol` SDK) against the stdio server (spawns `demo-cli mcp`) and the HTTP server (in-process). Verifies the tool list, annotations, policy, auth rejection, Host/Origin checks, and loopback-only binding | No |
+| UI | FlaUI drives the real WPF app in `--demo` mode: no AI without opt-in, opt-in flow, approve → grid updates, deny → nothing changes, agent reads live selection over MCP | No |
+
+The UI tests and the screenshot tool share one `DesktopDriver` (`tools/Demo.Screenshots/DesktopDriver.cs`), which finds elements by `AutomationId`.
 
 ## 8. Documentation screenshots are automated
 
-`--demo` mode starts the WPF app with seeded data and a **scripted chat client** that replays a canned conversation (including a tool call and an approval card). No key, no network, identical output every run. `scripts/capture-screenshots.ps1` builds, launches the apps, drives them with FlaUI, and writes PNGs to `docs/images/`. Rerun after any UI change.
+`--demo` mode starts the WPF app with a throwaway profile, seeded data and a **scripted chat client** that replays a canned conversation. The tool calls in it still really execute against the domain, and the approval card is real. No key, no network.
+
+`scripts/capture-screenshots.ps1` builds, launches the app, clicks through the walkthrough with FlaUI, connects real MCP clients to both apps, and writes PNGs to `docs/images/`.
+
+**Capture is done in-process.** In demo mode the app listens on a per-user named pipe. On request it renders a window with WPF's `RenderTargetBitmap` and saves a PNG. Screen-scraping fails when the session is locked, on build agents, and with overlapping windows. In-process rendering works in all of those cases and produces identical images on every machine. Console output is real program output rendered as a terminal-style image for the same reason.
 
 ## 9. Open items
 
-- **Real domain** — replace the placeholder work-order/inventory domain with one that mirrors our actual tools.
-- Per-capability approval policy (e.g. "always allow this one") — UI design TBD.
-- Whether to offer a "sign in" flow instead of raw keys, if/when vendors offer one suitable for third-party desktop apps.
+- **Real domain:** replace the placeholder work-order/inventory domain with one that mirrors our actual tools.
+- **OpenAI live call returned HTTP 400** with the default model `gpt-6-astra` (Anthropic's live test passes). Needs diagnosis with a couple of real requests; possibly the model expects the Responses API (`GetResponsesClient(...).AsIChatClient()`) or rejects part of a tool schema.
+- **Streaming replies** in the chat panel. Responses are short today, so we use the non-streaming call. Streaming needs care around approvals.
+- **Desktop ↔ console data sync:** the desktop app caches data, so changes made through `demo-cli` while it's open appear only after a restart. A file watcher would fix this for the demo; a real product has a database.
+- Per-capability approval policy (e.g. "always allow this one"), and IT-managed tool allow-lists.
+- Audit log of AI-initiated changes.
+- A "sign in with provider" flow instead of raw keys, if and when vendors offer one suitable for third-party desktop apps.

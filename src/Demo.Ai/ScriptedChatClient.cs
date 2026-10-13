@@ -20,12 +20,15 @@ public sealed class ScriptedChatClient(IEnumerable<ScriptedChatClient.Step> step
 
     public int RemainingSteps => _steps.Count;
 
+    /// <summary>Used once the script runs out; when null, running out throws.</summary>
+    public Step? Fallback { get; init; }
+
     public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         var history = messages.ToList();
         Requests.Add(history);
         if (!_steps.TryDequeue(out var step))
-            throw new InvalidOperationException("The script has no more responses.");
+            step = Fallback ?? throw new InvalidOperationException("The script has no more responses.");
         var response = step(history);
         response.ModelId ??= ModelId;
         return Task.FromResult(response);
