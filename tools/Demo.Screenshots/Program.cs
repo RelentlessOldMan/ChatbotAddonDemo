@@ -76,7 +76,7 @@ public static class Program
         d.Click("ApproveButton");
 
         // 6. The plan is saved (it appears in the grid); using the bench needs a second approval.
-        d.WaitUntil(() => d.FindAll("ApprovalCard").Length == 2 && d.FindAll("ApproveButton").Length == 1, "bench approval");
+        d.WaitUntil(() => d.FindAll("ApprovalResult").Length == 1 && d.FindAll("ApproveButton").Length == 1, "bench approval");
         d.SelectRow("PlansGrid", "TP-1002");
         d.Capture(d.Main, Shot("06-chat-run-approval.png"));
         d.Click("ApproveButton");

@@ -22,7 +22,10 @@ public sealed class DesktopDriver : IDisposable
     {
         _app = app;
         _snapshotPipe = snapshotPipe;
-        Main = Retry.WhileNull(() => _app.GetMainWindow(_automation), DefaultTimeout, throwOnTimeout: true).Result!;
+        // Not _app.GetMainWindow: it waits forever for Process.MainWindowHandle, which stays empty because the
+        // unobtrusive window has no taskbar button (WPF gives it a hidden owner). Find it through UIA instead.
+        Main = Retry.WhileNull(() => _automation.GetDesktop().FindFirstChild(cf => cf.ByProcessId(_app.ProcessId).And(cf.ByControlType(FlaUI.Core.Definitions.ControlType.Window)))?.AsWindow(),
+            DefaultTimeout, throwOnTimeout: true, timeoutMessage: "The main window did not appear").Result!;
     }
 
     public Window Main { get; }
@@ -95,9 +98,8 @@ public sealed class DesktopDriver : IDisposable
 
     public void Dispose()
     {
-        try { _app.Close(); } catch { /* already gone */ }
-        if (!_app.HasExited && !_app.WaitWhileMainHandleIsMissing(TimeSpan.FromSeconds(1))) { }
-        try { if (!_app.HasExited) _app.Kill(); } catch { }
+        try { Main.Close(); } catch { /* already gone */ }
+        try { if (!Process.GetProcessById(_app.ProcessId).WaitForExit(3000)) _app.Kill(); } catch { /* already gone */ }
         _app.Dispose();
         _automation.Dispose();
     }

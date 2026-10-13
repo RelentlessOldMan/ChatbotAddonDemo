@@ -27,8 +27,7 @@
         </DataTemplate>
 
         <DataTemplate DataType="{x:Type vm:ApprovalItem}">
-            <Border Background="{StaticResource WarnSoft}" BorderBrush="#F2C46D" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,6"
-                    AutomationProperties.AutomationId="ApprovalCard">
+            <Border Background="{StaticResource WarnSoft}" BorderBrush="#F2C46D" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,6">
                 <StackPanel>
                     <TextBlock Foreground="{StaticResource Warn}" FontWeight="SemiBold" Text="{Binding Heading}"/>
                     <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,2"/>
@@ -39,7 +38,7 @@
                         <Button Style="{StaticResource PlainButton}" Content="Deny" Margin="8,0,0,0"
                                 Command="{Binding DenyCommand}" AutomationProperties.AutomationId="DenyButton"/>
                     </StackPanel>
-                    <TextBlock Margin="0,8,0,0" FontWeight="SemiBold">
+                    <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" AutomationProperties.AutomationId="ApprovalResult">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Collapsed"/>

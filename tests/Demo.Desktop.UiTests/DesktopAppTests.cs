@@ -73,7 +73,8 @@ public sealed class DesktopAppTests : IDisposable
         Assert.Single(d.Find("PlansGrid").AsDataGridView().Rows); // nothing is created before approval
         d.Click("ApproveButton");
 
-        d.WaitUntil(() => d.FindAll("ApproveButton").Length == 1 && d.FindAll("ApprovalCard").Length == 2, "the bench approval card");
+        // ApprovalResult ("✓ Approved by you") only exists once a card is decided, so this is the second, still-pending card.
+        d.WaitUntil(() => d.FindAll("ApprovalResult").Length == 1 && d.FindAll("ApproveButton").Length == 1, "the bench approval card");
         Assert.Single(Directory.GetDirectories(Path.Combine(Workspace, "runs"))); // the bench isn't used before approval
         d.Click("ApproveButton");
 
