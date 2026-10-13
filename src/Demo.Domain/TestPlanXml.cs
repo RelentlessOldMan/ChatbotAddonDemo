@@ -45,13 +45,15 @@ public static class TestPlanXml
         return doc.Declaration + doc.ToString() + Environment.NewLine;
     }
 
-    /// <summary>Parses and fully validates plan XML (schema, then bench rules).</summary>
+    /// <summary>Parses and fully validates plan XML (schema, then bench rules). Any problem is a <see cref="DomainException"/>.</summary>
     public static TestPlan Parse(string xml)
     {
         XDocument doc;
         try
         {
-            doc = XDocument.Parse(xml);
+            // No DTDs: plan files come from outside, and entity expansion has no place in them.
+            using var reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            doc = XDocument.Load(reader);
         }
         catch (XmlException ex)
         {
@@ -62,27 +64,42 @@ public static class TestPlanXml
         doc.Validate(Schema.Value, (_, e) => errors.Add(e.Message));
         if (errors.Count > 0) throw new DomainException($"The plan does not match TestPlan.xsd: {string.Join(" ", errors.Take(3))}");
 
-        var root = doc.Root!;
-        var plan = new TestPlan(
-            (string)root.Attribute("id")!,
-            (string)root.Attribute("name")!,
-            (string)root.Attribute("device")!,
-            DateTimeOffset.Parse((string)root.Attribute("created")!, Inv),
-            (string?)root.Attribute("source") ?? "imported",
-            root.Element("Conditions")!.Elements("Sweep").Select(s => new ConditionSweep(
-                (string)s.Attribute("parameter")!,
-                (string)s.Attribute("units")!,
-                ((string)s.Attribute("values")!).Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(v => double.Parse(v, Inv)).ToList())).ToList(),
-            (int)root.Element("Samples")!.Attribute("count")!,
-            root.Element("Tests")!.Elements("Test").Select(t => new PlannedTest(
-                (string)t.Attribute("id")!,
-                (string)t.Attribute("name")!,
-                (string)t.Attribute("units")!,
-                (double?)t.Attribute("min"),
-                (double?)t.Attribute("max"))).ToList());
+        TestPlan plan;
+        try
+        {
+            var root = doc.Root!;
+            plan = new TestPlan(
+                (string)root.Attribute("id")!,
+                (string)root.Attribute("name")!,
+                (string)root.Attribute("device")!,
+                DateTimeOffset.Parse((string)root.Attribute("created")!, Inv),
+                (string?)root.Attribute("source") ?? "imported",
+                root.Element("Conditions")!.Elements("Sweep").Select(s => new ConditionSweep(
+                    (string)s.Attribute("parameter")!,
+                    (string)s.Attribute("units")!,
+                    ((string)s.Attribute("values")!).Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(XmlConvert.ToDouble).ToList())).ToList(),
+                Count((string)root.Element("Samples")!.Attribute("count")!),
+                root.Element("Tests")!.Elements("Test").Select(t => new PlannedTest(
+                    (string)t.Attribute("id")!,
+                    CanonicalName((string)t.Attribute("id")!, (string)t.Attribute("name")!),
+                    (string)t.Attribute("units")!,
+                    (double?)t.Attribute("min"),
+                    (double?)t.Attribute("max"))).ToList());
+        }
+        catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
+        {
+            throw new DomainException($"The plan has a value that cannot be read: {ex.Message}");
+        }
         Validate(plan);
         return plan;
     }
+
+    // Way past the bench limit still reads as a number, so Validate can say what the limit is.
+    private static int Count(string text) => long.TryParse(text.Trim(), NumberStyles.AllowLeadingSign, Inv, out var n) ? (int)Math.Clamp(n, 0, int.MaxValue) : int.MaxValue;
+
+    // A test's name is the bench's name for that measurement; the file's own text is not trusted (it ends up in CSV and reports).
+    private static string CanonicalName(string id, string name) =>
+        Bench.Measurements.FirstOrDefault(m => string.Equals(m.Id, id, StringComparison.OrdinalIgnoreCase))?.Name ?? name;
 
     /// <summary>The bench's rules for a runnable plan. Throws <see cref="DomainException"/> with every problem found.</summary>
     public static void Validate(TestPlan plan)
@@ -102,8 +119,10 @@ public static class TestPlanXml
             if (sweep.Units != definition.Units) problems.Add($"{definition.Id} must be in {definition.Units}, not '{sweep.Units}'.");
             if (sweep.Values.Count == 0) problems.Add($"{definition.Id} needs at least one value.");
             if (sweep.Values.Distinct().Count() != sweep.Values.Count) problems.Add($"{definition.Id} has duplicate values.");
+            foreach (var v in sweep.Values.Where(v => !double.IsFinite(v)))
+                problems.Add($"{definition.Id} values must be numbers; '{v.ToString(Inv)}' is not.");
             foreach (var v in sweep.Values.Where(v => v < definition.Min || v > definition.Max))
-                problems.Add($"{definition.Id} {v} {definition.Units} is outside the bench range {definition.Min} to {definition.Max} {definition.Units}.");
+                problems.Add(I($"{definition.Id} {v} {definition.Units} is outside the bench range {definition.Min} to {definition.Max} {definition.Units}."));
         }
 
         if (plan.Tests.Count == 0) problems.Add("The plan needs at least one test.");
@@ -115,14 +134,20 @@ public static class TestPlanXml
             if (known is null) { problems.Add($"The bench cannot measure '{test.Id}'. Available: {string.Join(", ", Bench.Measurements.Select(m => m.Id))}."); continue; }
             if (test.Units != known.Units) problems.Add($"{test.Id} is measured in {known.Units}, not '{test.Units}'.");
             if (test.Min is null && test.Max is null) problems.Add($"{test.Id} needs a min or max limit.");
-            if (test.Min is { } lo && test.Max is { } hi && lo >= hi) problems.Add($"{test.Id}: min ({lo}) must be below max ({hi}).");
+            foreach (var limit in new[] { test.Min, test.Max }.OfType<double>().Where(l => !double.IsFinite(l)))
+                problems.Add($"{test.Id} limits must be numbers; '{limit.ToString(Inv)}' is not.");
+            if (test.Min is { } lo && test.Max is { } hi && lo >= hi) problems.Add(I($"{test.Id}: min ({lo}) must be below max ({hi})."));
         }
 
-        if (problems.Count == 0 && plan.MeasurementCount > Bench.MaxMeasurementsPerRun)
-            problems.Add($"The plan has {plan.MeasurementCount} measurements; the bench allows {Bench.MaxMeasurementsPerRun} per run. Use fewer conditions or units.");
+        // Counted in long: a big enough sweep would overflow plan.MeasurementCount and slip under the limit.
+        var count = plan.Conditions.Aggregate(Math.Min((long)plan.Samples * plan.Tests.Count, int.MaxValue), (n, c) => Math.Min(n * c.Values.Count, int.MaxValue));
+        if (problems.Count == 0 && count > Bench.MaxMeasurementsPerRun)
+            problems.Add($"The plan has {count} measurements; the bench allows {Bench.MaxMeasurementsPerRun} per run. Use fewer conditions or units.");
 
         if (problems.Count > 0) throw new DomainException(string.Join(" ", problems));
     }
+
+    private static string I(FormattableString text) => text.ToString(Inv);
 
     private static XmlSchemaSet LoadSchema()
     {

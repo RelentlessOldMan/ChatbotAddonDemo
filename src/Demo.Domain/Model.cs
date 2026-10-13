@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Demo.Domain;
 
 // The "legacy" tool's domain: a bench-test station for voltage regulators.
@@ -19,9 +21,9 @@ public sealed record PlannedTest(string Id, string Name, string Units, double? M
     public string LimitText =>
         (Min, Max) switch
         {
-            ({ } lo, { } hi) => $"{lo:0.####} to {hi:0.####} {Units}",
-            ({ } lo, null) => $"≥ {lo:0.####} {Units}",
-            (null, { } hi) => $"≤ {hi:0.####} {Units}",
+            ({ } lo, { } hi) => string.Create(CultureInfo.InvariantCulture, $"{lo:0.####} to {hi:0.####} {Units}"),
+            ({ } lo, null) => string.Create(CultureInfo.InvariantCulture, $"≥ {lo:0.####} {Units}"),
+            (null, { } hi) => string.Create(CultureInfo.InvariantCulture, $"≤ {hi:0.####} {Units}"),
             _ => "no limits",
         };
 }
@@ -81,7 +83,7 @@ public sealed record Measurement(
     double? Max,
     bool Pass)
 {
-    public string ConditionText => $"DUT {Dut} at {TemperatureC:0.#} °C, {SupplyV:0.0#} V, {LoadMa:0.#} mA";
+    public string ConditionText => string.Create(CultureInfo.InvariantCulture, $"DUT {Dut} at {TemperatureC:0.#} °C, {SupplyV:0.0#} V, {LoadMa:0.#} mA");
 }
 
 /// <summary>Narrows which measurements an analysis or query looks at. Null fields match everything.</summary>
@@ -107,9 +109,9 @@ public sealed record MeasurementFilter(
     {
         var parts = new List<string>();
         if (TestId is not null) parts.Add($"test {TestId}");
-        if (TemperatureC is not null) parts.Add($"{TemperatureC:0.#} °C");
-        if (SupplyV is not null) parts.Add($"{SupplyV:0.0#} V");
-        if (LoadMa is not null) parts.Add($"{LoadMa:0.#} mA");
+        if (TemperatureC is not null) parts.Add(string.Create(CultureInfo.InvariantCulture, $"{TemperatureC:0.#} °C"));
+        if (SupplyV is not null) parts.Add(string.Create(CultureInfo.InvariantCulture, $"{SupplyV:0.0#} V"));
+        if (LoadMa is not null) parts.Add(string.Create(CultureInfo.InvariantCulture, $"{LoadMa:0.#} mA"));
         if (Dut is not null) parts.Add($"DUT {Dut}");
         if (FailedOnly) parts.Add("failures only");
         return parts.Count == 0 ? "all measurements" : string.Join(", ", parts);

@@ -79,7 +79,7 @@ public sealed class TestBenchService
 
     public string PlanPath(string planId)
     {
-        var path = Path.Combine(PlansFolder, $"{planId.Trim().ToUpperInvariant()}.xml");
+        var path = Path.Combine(PlansFolder, $"{ValidId(planId, "TP", "plan", "TP-1002")}.xml");
         return File.Exists(path) ? path : throw new DomainException($"Test plan '{planId}' does not exist.");
     }
 
@@ -136,7 +136,7 @@ public sealed class TestBenchService
             .ToList();
 
     public TestRun GetRun(string runId) =>
-        TryLoadRun(runId.Trim().ToUpperInvariant()) ?? throw new DomainException($"Test run '{runId}' does not exist.");
+        TryLoadRun(RunId(runId)) ?? throw new DomainException($"Test run '{runId}' does not exist.");
 
     /// <summary>The run currently using the bench, from this process or another one (e.g. the console tool).</summary>
     public TestRun? BenchBusyWith() =>
@@ -152,13 +152,23 @@ public sealed class TestBenchService
             if (BenchBusyWith() is { } busy)
                 throw new DomainException($"The bench is busy with {busy.Id} ({busy.PercentComplete}% done). Wait for it to finish or cancel it.");
 
-            var id = $"R-{NextNumber(Directory.EnumerateDirectories(RunsFolder, "R-*").Select(Path.GetFileName)!)}";
-            Directory.CreateDirectory(RunFolder(id));
-            var now = _time.GetLocalNow();
-            var run = new TestRun(id, plan.Id, plan.Name, plan.Device, RunStatus.Running, now, null, plan.MeasurementCount, 0, 0, now);
-            SaveRun(run);
-            active = _active = new ActiveRun(run);
+            // Another program (the console tool, an MCP server) may be starting a run in the same workspace:
+            // whoever first puts run.json into a folder owns that id; the other takes the next one.
+            TestRun run;
+            do
+            {
+                var id = $"R-{NextNumber(Directory.EnumerateDirectories(RunsFolder, "R-*").Select(Path.GetFileName)!)}";
+                Directory.CreateDirectory(RunFolder(id));
+                var now = _time.GetLocalNow();
+                run = new TestRun(id, plan.Id, plan.Name, plan.Device, RunStatus.Running, now, null, plan.MeasurementCount, 0, 0, now);
+            }
+            while (!TryCreateFile(Path.Combine(RunFolder(run.Id), "run.json"), JsonSerializer.Serialize(run, Json)));
+
+            // Task is set before the run is published, so WaitForRunAsync/CancelRunAsync never see it null.
+            // ExecuteAsync clears _active under _gate, so it can't do that before this block publishes it.
+            active = new ActiveRun(run);
             active.Task = Task.Run(() => ExecuteAsync(plan, active));
+            _active = active;
         }
         RaiseChanged();
         return active.Snapshot();
@@ -214,12 +224,21 @@ public sealed class TestBenchService
             throw new DomainException($"{run.Id} is still running ({run.PercentComplete}% done). Wait for it to finish first.");
         var rows = ResultFiles.ReadCsv(Files(runId).ResultsCsv);
         if (rows.Count == 0) throw new DomainException($"{run.Id} has no measurements ({run.Status}).");
+        if (!rows.Any(filter.Matches))
+        {
+            static string Values<T>(IEnumerable<T> values, string format) =>
+                string.Join(", ", values.Distinct().Order().Select(v => string.Format(Inv, format, v)));
+            throw new DomainException($"No measurements in {run.Id} match {filter.Describe()}. Available tests are {Values(rows.Select(r => r.TestId), "{0}")}; " +
+                $"temperatures {Values(rows.Select(r => r.TemperatureC), "{0:0.#} °C")}; supplies {Values(rows.Select(r => r.SupplyV), "{0:0.0#} V")}; " +
+                $"loads {Values(rows.Select(r => r.LoadMa), "{0:0.#} mA")}; DUTs {Values(rows.Select(r => r.Dut), "{0}")}.");
+        }
         return RunAnalyzer.Analyze(run, GetPlan(run.PlanId), rows, filter);
     }
 
     public RunFiles Files(string runId)
     {
-        var folder = RunFolder(GetRun(runId).Id);
+        var id = GetRun(runId).Id; // GetRun only returns a run whose run.json agrees with the (validated) id asked for
+        var folder = RunFolder(id);
         var plots = Path.Combine(folder, "plots");
         var report = Path.Combine(folder, "report.html");
         return new RunFiles(folder, Path.Combine(folder, "results.csv"), Path.Combine(folder, "summary.csv"), plots,
@@ -270,7 +289,8 @@ public sealed class TestBenchService
                         if (_time.GetUtcNow() - lastSave > TimeSpan.FromMilliseconds(250))
                         {
                             await writer.FlushAsync();
-                            SaveRun(active.Snapshot());
+                            try { SaveRun(active.Snapshot()); }
+                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } // progress only; the next save catches up
                             lastSave = _time.GetUtcNow();
                             RaiseChanged();
                         }
@@ -305,9 +325,10 @@ public sealed class TestBenchService
     {
         lock (_gate)
         {
-            var plan = draft with { Id = $"TP-{NextNumber(Directory.EnumerateFiles(PlansFolder, "TP-*.xml").Select(Path.GetFileNameWithoutExtension)!)}" };
-            TestPlanXml.Validate(plan);
-            File.WriteAllText(Path.Combine(PlansFolder, plan.Id + ".xml"), TestPlanXml.ToXml(plan));
+            TestPlanXml.Validate(draft);
+            TestPlan plan;
+            do plan = draft with { Id = $"TP-{NextNumber(Directory.EnumerateFiles(PlansFolder, "TP-*.xml").Select(Path.GetFileNameWithoutExtension)!)}" };
+            while (!TryCreateFile(Path.Combine(PlansFolder, plan.Id + ".xml"), TestPlanXml.ToXml(plan))); // another program took that id
             RaiseChanged();
             return plan;
         }
@@ -324,24 +345,60 @@ public sealed class TestBenchService
         return [Sweep(Bench.Temperature, temperatures), Sweep(Bench.SupplyVoltage, supplies), Sweep(Bench.LoadCurrent, loads)];
     }
 
+    /// <summary>Only call with an id that went through <see cref="RunId"/> (or one this process made).</summary>
     private string RunFolder(string runId) => Path.Combine(RunsFolder, runId);
+
+    /// <summary>
+    /// Plan and run ids become file names, so anything else (e.g. "..\..\x") is refused before the
+    /// file system is touched. The message is meant for whoever typed the id, person or model.
+    /// </summary>
+    private static string ValidId(string? id, string prefix, string what, string example)
+    {
+        var text = id?.Trim().ToUpperInvariant();
+        return IsValidId(text, prefix) ? text! : throw new DomainException($"'{id}' is not a valid {what} id; {what} ids look like '{example}'.");
+    }
+
+    private static string RunId(string? runId) => ValidId(runId, "R", "run", "R-1002");
+
+    /// <summary>PREFIX-digits, e.g. TP-1002 or R-1002 (at most 9 digits, so the number fits an int).</summary>
+    private static bool IsValidId(string? id, string prefix) =>
+        id is not null && id.StartsWith(prefix + "-", StringComparison.Ordinal) &&
+        id[(prefix.Length + 1)..] is { Length: > 0 and <= 9 } digits && digits.All(char.IsAsciiDigit);
 
     private TestRun? TryLoadRun(string runId)
     {
+        if (!IsValidId(runId, "R")) return null;
         var active = _active?.Snapshot();
         if (active is not null && active.Id == runId) return active;
         var path = Path.Combine(RunFolder(runId), "run.json");
         if (!File.Exists(path)) return null;
         try
         {
-            var run = JsonSerializer.Deserialize<TestRun>(File.ReadAllText(path), Json);
+            var run = JsonSerializer.Deserialize<TestRun>(ReadShared(path), Json);
+            // A run.json that names another run or a malformed plan id is not trusted to steer later file access.
+            if (run is null || run.Id != runId || !IsValidId(run.PlanId, "TP")) return null;
             return run is { Status: RunStatus.Running } && _time.GetLocalNow() - run.Heartbeat > StaleAfter
                 ? run with { Status = RunStatus.Interrupted }
                 : run;
         }
-        catch (Exception ex) when (ex is JsonException or IOException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    // Shares everything, so a read never blocks the bench more than Windows insists on (it still won't let
+    // File.Move replace an open file; SaveRun retries for that). Retries the moment of the swap itself.
+    private static string ReadShared(string path)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+                return reader.ReadToEnd();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 4) { Thread.Sleep(10 * attempt); }
         }
     }
 
@@ -350,13 +407,36 @@ public sealed class TestBenchService
         var path = Path.Combine(RunFolder(run.Id), "run.json");
         var temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(run, Json));
-        File.Move(temp, path, overwrite: true);
+        // Windows won't replace a file while anyone has it open (FileShare.Delete or not), and other programs poll
+        // run.json. Their reads take microseconds, so retry for up to about a second rather than fail the run.
+        for (var attempt = 1; ; attempt++)
+        {
+            try { File.Move(temp, path, overwrite: true); return; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 25) { Thread.Sleep(Math.Min(5 * attempt, 50)); }
+        }
+    }
+
+    /// <summary>Writes a new file all at once, or returns false if the file already exists (e.g. another program just created it).</summary>
+    private static bool TryCreateFile(string path, string content)
+    {
+        var temp = Path.Combine(Path.GetDirectoryName(path)!, $".{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(temp, content);
+        try
+        {
+            File.Move(temp, path, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            File.Delete(temp);
+            return false;
+        }
     }
 
     private TestPlan? TryLoadPlan(string path)
     {
         try { return TestPlanXml.Parse(File.ReadAllText(path)); }
-        catch (Exception ex) when (ex is DomainException or IOException) { return null; }
+        catch (Exception ex) when (ex is DomainException or IOException or UnauthorizedAccessException) { return null; }
     }
 
     private static SpecSheet? TryLoadSpec(string path)

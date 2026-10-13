@@ -142,8 +142,10 @@ public sealed class TestBenchCapabilities(TestBenchService bench)
     [Description("Starts running a plan on the bench and returns the new run id at once. The bench runs one plan at a time. Follow with wait_for_test_run.")]
     public object StartTestRun([Description("Plan id, e.g. 'TP-1002'.")] string planId)
     {
+        // Read the plan first: once the run has started, nothing here may fail and report an error for a running run.
+        var estimate = Bench.EstimateDuration(bench.GetPlan(planId), bench.Options);
         var run = bench.StartRun(planId);
-        return new { run, estimatedBenchSeconds = Math.Round(Bench.EstimateDuration(bench.GetPlan(planId), bench.Options).TotalSeconds) };
+        return new { run, estimatedBenchSeconds = Math.Round(estimate.TotalSeconds) };
     }
 
     [Capability("cancel_test_run", SafetyClass.Execute, Title = "Stop a run")]
