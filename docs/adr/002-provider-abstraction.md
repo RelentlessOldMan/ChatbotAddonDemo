@@ -15,6 +15,6 @@ Option 3. `ChatClientFactory` builds an `IChatClient` from the provider, the mod
 
 ## Consequences
 - Adding a provider is one `switch` arm.
-- The common denominator hides some vendor features. Where we need them (e.g. Anthropic prompt caching or effort), we set them through `ChatOptions.RawRepresentationFactory` inside the provider-specific factory code.
+- The common denominator hides some vendor features. Where we need them, we set them through `ChatOptions.RawRepresentationFactory` inside the provider-specific factory code. Today that's only OpenAI's `store: false`; Anthropic prompt caching would go in the same place (see the design doc's open items).
 - Default models: `claude-opus-5-5` (Anthropic) and `gpt-6-astra` (OpenAI). Both can be changed in Settings because model names change faster than our release cycle.
 - OpenAI goes through the **Responses API** (`GetResponsesClient().AsIChatClient(model)`), not Chat Completions: current models return HTTP 400 for function tools with reasoning on `/v1/chat/completions`. Response storage is turned off (`store: false`) so customer data isn't kept on OpenAI's side, which means the whole conversation is sent with each request, the same as with Anthropic.

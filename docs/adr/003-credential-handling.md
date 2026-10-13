@@ -7,11 +7,11 @@ The app runs on customer desktops and the customer pays for tokens, so we must n
 
 ## Decision
 Credential sources, in precedence order:
-1. **Machine policy / gateway:** `HKLM\Software\Policies\ChatbotAddonDemo` (or env vars) sets a base URL and optional token. Requests go to the customer's own LLM gateway, which holds the vendor key and enforces budgets and logging.
+1. **Machine policy / gateway:** `HKLM\Software\Policies\ChatbotAddonDemo` sets a base URL and optional token. Requests go to the customer's own LLM gateway, which holds the vendor key and enforces budgets and logging.
 2. **Environment variables:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 3. **User-entered key:** stored encrypted with `ProtectedData.Protect(..., DataProtectionScope.CurrentUser)` under `%LOCALAPPDATA%\ChatbotAddonDemo\`.
 
-Keys are never written to plaintext settings or logs, and they are masked in the UI after entry. A "Test connection" check runs before the key is saved.
+Keys are never written to plaintext settings or logs, and they are masked in the UI after entry. Settings has a "Test connection" button that sends one tiny request with the saved key.
 
 ## Alternatives rejected
 - **Vendor key embedded in our binary:** it can be extracted, and we would pay for every customer's usage.

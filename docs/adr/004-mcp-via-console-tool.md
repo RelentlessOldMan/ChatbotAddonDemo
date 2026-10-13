@@ -27,4 +27,4 @@ Option 2 is documented as an **optional extension, not built** ([design §8](../
 ## Consequences
 - The desktop app has no MCP code and no MCP settings. Its Settings page points agent users to `demo-cli mcp`.
 - An agent can't ask "what is the user looking at?" (`get_current_view` exists only in the chat panel). If that becomes important, build option 2 or a stdio shim that relays to the running app over a named pipe.
-- If the agent session ends during a bench run, the console process exits and the run is marked *Interrupted*. Agents should call `wait_for_test_run` before ending.
+- If the agent session ends during a bench run, the console tool cancels the run before it exits (status *Cancelled*), so the bench isn't left busy. If the process is killed outright, the run shows as *Interrupted* once its heartbeat is 15 s old. Agents should call `wait_for_test_run` before ending.

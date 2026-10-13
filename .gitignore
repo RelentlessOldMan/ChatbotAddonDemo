@@ -11,3 +11,6 @@ obj/
 *.user
 TestResults/
 artifacts/
+
+# Claude Code worktrees
+.claude/

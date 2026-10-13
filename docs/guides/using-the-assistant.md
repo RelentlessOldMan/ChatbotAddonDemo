@@ -15,7 +15,7 @@ It can look things up on its own. **Before it creates a file or uses the bench, 
 It's off until you turn it on.
 
 ## What you need
-An account with **Anthropic** (Claude) or **OpenAI**, and an API key from that account. You pay the provider directly for what you use. A typical question costs a fraction of a cent to a few cents.
+An account with **Anthropic** (Claude) or **OpenAI**, and an API key from that account. You pay the provider directly for what you use. A typical question costs from under a cent to around ten cents with the default model; long chats cost more per message.
 
 > If your company has set up an **AI gateway**, you don't need a key. The Settings page will say "Your organization's AI gateway", and you can skip step 3.
 
@@ -23,7 +23,7 @@ An account with **Anthropic** (Claude) or **OpenAI**, and an API key from that a
 1. Open **Settings**.
 2. Read the short note about what is sent, then tick **Enable the AI assistant**.
 3. Choose your provider, paste your API key, and click **Save key**. Click **Test connection** to check that it works.
-4. Optionally set a **spending limit per chat**. The default is $1.00.
+4. Optionally set a **spending limit per chat**. The default is $1.00. (If TestBench doesn't know your model's prices, it limits tokens instead and says so under the input box.)
 5. Click **Save**. The **Assistant** panel appears on the right.
 
 ![Settings](../images/04-settings-ai-assistant.png)
@@ -51,7 +51,7 @@ When the run finishes, it reports the findings:
 - 💲 **Every message you send** costs a little. The assistant usually talks to the provider several times per message: once to decide what to look up, again after each lookup, and once to write the answer. All of it goes on your provider account. The line under the input box shows the running total.
 - **Free:** using TestBench's own screens, running plans on the bench, writing the CSV files and plots, and the analysis itself. These are TestBench, not AI.
 - Long chats get more expensive per message, because the conversation so far is sent each time. Click **New chat** when you change topic.
-- The **spending limit** stops the assistant before it sends a request that would go over it.
+- The **spending limit** is checked before every request the assistant sends. If the next request would likely go over, it isn't sent and the assistant tells you. The cost is an estimate, so the total can end up slightly above or below the limit.
 
 ## Where do the numbers come from?
 TestBench calculates every number itself (pass/fail, statistics, drift) from the measurement files. The assistant chooses which analysis to run and explains the result. It doesn't do the maths, so the numbers it quotes match the report and the CSV files.

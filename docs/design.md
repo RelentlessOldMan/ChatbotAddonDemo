@@ -144,7 +144,7 @@ flowchart TB
 | `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model replays the conversation; the tools still run for real | none | n/a |
 | `DEMO_LIVE_TESTS=1` | **Yes**, one short chat per provider | Whoever's keys are in the environment | A few thousand tokens |
 
-What the customer sees and controls: the panel shows tokens used and an estimated cost after every request; a per-chat dollar limit (default $1.00) is checked *before* each request; and a cap on round trips per message stops a confused model from looping. See §6.4.
+What the customer sees and controls: the panel shows tokens used and an estimated cost after every request; a per-chat limit (default $1.00) is checked *before* every request, including the automatic lookups within one message; and a cap on round trips between approvals stops a confused model from looping. See §6.4.
 
 ### Things the diagram makes explicit
 
@@ -168,7 +168,7 @@ What the customer sees and controls: the panel shows tokens used and an estimate
 | Library (project) | Responsibility | Used by | Why it's a separate piece |
 |---|---|---|---|
 | **Demo.Domain**, the "bench logic" | Plans (XML + schema + validation), spec-sheet import, the simulated bench, result files, plots, analysis, report. **Knows nothing about AI.** | Both programs | It's the legacy tool's core. Every way in ends here, so the rules are enforced once. |
-| **Demo.Capabilities**, the "capability catalog" | The list of what AI may do: 13 tools, each with a model-facing description, typed parameters (which become the JSON schema) and a safety class (Read / Write / Execute). | Both programs | Defined **once** and used by both the chat panel and MCP. Without it, chat tools and MCP tools would be written twice and drift apart. See [ADR-001](adr/001-capability-layer.md). |
+| **Demo.Capabilities**, the "capability catalog" | The list of what AI may do: 13 shared tools (the desktop app adds a 14th, `get_current_view`, for its chat panel only), each with a model-facing description, typed parameters (which become the JSON schema) and a safety class (Read / Write / Execute). | Both programs | Defined **once** and used by both the chat panel and MCP. Without it, chat tools and MCP tools would be written twice and drift apart. See [ADR-001](adr/001-capability-layer.md). |
 | **Demo.Ai** | Talking to Claude/OpenAI (`IChatClient`), the chat loop with approvals, credentials (DPAPI, gateway, env var), cost meter. | Desktop app only | Everything about *our app calling a model*. The console tool doesn't reference it, because it never calls a model. |
 | *(MCP server code, inside demo-cli)* | Turns the catalog into MCP tools and applies the `--allow-writes` / `--allow-runs` policy. | Console tool only | Small adapter: about 100 lines on top of the official MCP SDK. |
 
@@ -186,7 +186,7 @@ From that one definition we get an `AIFunction` for the chat panel (works with a
 
 | Safety class | Capabilities | Chat panel | MCP (console tool) | MCP annotations |
 |---|---|---|---|---|
-| **Read** | `get_bench_info`, `list_spec_files`, `list_test_plans`, `get_test_plan`, `list_test_runs`, `wait_for_test_run`, `get_run_summary`, `query_measurements` | Runs automatically; shown as a "⚙ …" line | Always available | `readOnlyHint: true` |
+| **Read** | `get_bench_info`, `list_spec_files`, `list_test_plans`, `get_test_plan`, `list_test_runs`, `wait_for_test_run`, `get_run_summary`, `query_measurements`; plus `get_current_view` (desktop chat panel only) | Runs automatically; shown as a "⚙ …" line | Always available | `readOnlyHint: true` |
 | **Write**: creates files | `create_test_plan`, `create_test_plan_from_spec`, `generate_report` | **Approval card** ("The assistant wants to create a file") | Only with `--allow-writes` | `readOnlyHint: false` |
 | **Execute**: uses the hardware | `start_test_run`, `cancel_test_run` | **Approval card** ("The assistant wants to use the test bench") | Only with `--allow-runs` | `readOnlyHint: false`, `openWorldHint: true` |
 
@@ -209,7 +209,7 @@ sequenceDiagram
     participant B as Bench logic + files
 
     U->>P: "Make a hot/cold plan from the LDO-3300 datasheet … run it and tell me what you find"
-    P->>M: 💲 request 1: system prompt + 14 tool definitions + question
+    P->>M: 💲 request 1: system prompt + 14 tool definitions (13 shared + get_current_view) + question
     M-->>P: call list_spec_files
     P->>C: run (Read: no approval needed)
     C->>B: list specs/ folder
@@ -226,8 +226,11 @@ sequenceDiagram
     P->>C: run → bench starts R-1002 in the background (no tokens while it runs)
     P->>M: 💲 request 4: … + result (R-1002 started)
     M-->>P: call wait_for_test_run(R-1002)
+    P->>C: run (Read)
+    C->>B: wait locally until the run finishes (free, no tokens)
     P->>M: 💲 request 5: … + result (Completed)
     M-->>P: call get_run_summary(R-1002)
+    P->>C: run (Read)
     C->>B: read results.csv → statistics + findings (computed in code, free)
     P->>M: 💲 request 6: … + result (verdict, findings, file paths, not the raw CSV)
     M-->>P: answer in plain words
@@ -244,7 +247,7 @@ sequenceDiagram
 The chat code uses **`Microsoft.Extensions.AI.IChatClient`**, the standard .NET chat abstraction. Both vendors' official SDKs provide one:
 
 - Anthropic: `new AnthropicClient { ApiKey = … }.AsIChatClient("claude-opus-5-5")`
-- OpenAI: `new OpenAIClient(key).GetChatClient("gpt-6-astra").AsIChatClient()`
+- OpenAI: `new OpenAIClient(key).GetResponsesClient().AsIChatClient("gpt-6-astra")`, the Responses API with `store: false` so conversations aren't kept on OpenAI's side (see [ADR-002](adr/002-provider-abstraction.md))
 
 The tool loop (`FunctionInvokingChatClient`), approvals (`ApprovalRequiredAIFunction`), metering and the UI are provider-neutral. Adding another provider (Azure OpenAI, Bedrock, a local model) is one case in `ChatClientFactory`. See [ADR-002](adr/002-provider-abstraction.md).
 
@@ -273,9 +276,10 @@ What we deliberately **don't** do: ship our own key in the binary (anyone could 
 
 💲 Every model request in path C is billed to the customer, so they get to see and limit it:
 
-- Each response reports input and output tokens. The panel shows a running total and an *estimated* cost for the chat, from a small price table per model (unknown models show tokens only).
-- An optional per-chat limit (default $1.00) is checked **before** every request, so the request that would go over is never sent.
-- A cap on model↔tool round trips per message (8) stops a confused model from looping on the customer's bill.
+- Each response reports input and output tokens, and they're added to the chat's total as soon as that request finishes. The panel shows the running total and an *estimated* cost, from a small price table per model.
+- An optional per-chat limit (default $1.00) is checked **before every request**, including the automatic tool round trips inside one message. The app adds a projected cost for the next request to what the chat has spent so far and doesn't send it if the total would go over. The projection is an estimate (input about the size of the previous request, plus up to 1,000 output tokens), so the final total can land slightly above or below the limit.
+- **Models with no known price** (currently all OpenAI models, because we don't ship prices we haven't verified) get a **token limit** instead: 500,000 tokens per chat by default. The usage line says so, e.g. "84,000 tokens (limit 500k tokens; no price known for gpt-6-astra)". Turning the limit off in Settings turns both off.
+- A cap of 8 model↔tool round trips between approvals stops a confused model from looping on the customer's bill.
 
 Design choices that keep the bill down:
 
@@ -346,7 +350,7 @@ Two rules make the AI features trustworthy, and they are the most reusable lesso
 | API key stolen from disk | DPAPI (current Windows user) encryption; never in config or logs; the gateway option keeps keys off desktops entirely |
 | Model does something the user didn't want (mistake, or prompt injection hidden in a spec sheet) | Read tools only, unless a person approves each Write/Execute call; all calls go through bench validation; the catalog is the boundary (there is no "run any command" tool) |
 | Model reads arbitrary files | Spec sheets are read by bare file name from the workspace's `specs` folder only |
-| Runaway spend | Round-trip cap per message, optional per-chat dollar limit, visible meter |
+| Runaway spend | Round-trip cap, per-chat limit checked before every request (dollars, or tokens for unpriced models), visible meter |
 | Agent misuse through MCP | Read-only by default; `--allow-writes` and `--allow-runs` are separate; stdio means no network listener |
 | Data leaving the PC unexpectedly | Chat is opt-in, with a plain-language disclosure; nothing is sent until the user enables it and sends a message |
 
@@ -401,3 +405,11 @@ Arrows point from a project to the library it uses. The console tool has no path
 - **MCP progress notifications** for long runs, instead of `wait_for_test_run` polling.
 - Per-capability policy set by IT (e.g. "agents may never run the bench"), and an audit log of AI-initiated actions.
 - A "sign in with provider" flow instead of raw keys, if vendors offer one suitable for third-party desktop apps.
+- Known small gaps from the code review, left as-is for the demo:
+  - The run heartbeat is written after each measurement. A real soak or measurement longer than 15 s would need a timer, or another process could mark a live run *Interrupted*.
+  - Analysis uses the plan file as it is now. Snapshotting the plan into the run folder would protect against later edits.
+  - The "bench busy" check between two processes is check-then-act.
+  - The Cpk warning can fire on spread caused by sweeping supply voltage or only two temperatures.
+  - Spec CSV parsing doesn't handle quoted commas.
+  - The analysis tools have no load-current filter.
+  - The gateway token is a plain registry value that any local user can read; prefer identity-based gateways.

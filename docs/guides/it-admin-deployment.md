@@ -8,10 +8,12 @@ Set machine policy (Group Policy Preferences or Intune) under `HKLM\Software\Pol
 | Key | Value | Type | Meaning |
 |---|---|---|---|
 | `Anthropic\GatewayUrl` | `https://llm.corp.example/anthropic` | REG_SZ | Base URL replacing `api.anthropic.com` |
-| `Anthropic\GatewayToken` | *(optional)* | REG_SZ | Sent as the API key; omit if the gateway uses network/Windows identity |
+| `Anthropic\GatewayToken` | *(optional)* | REG_SZ | Sent as the API key; omit if the gateway uses network/Windows identity. Any local user can read HKLM, so prefer identity-based gateways or treat this token as shared by everyone on the machine. |
 | `OpenAI\GatewayUrl` | `https://llm.corp.example/openai/v1` | REG_SZ | Base URL replacing `api.openai.com/v1` |
 | `OpenAI\GatewayToken` | *(optional)* | REG_SZ | As above |
-| `DisableUserKeys` | `1` | REG_DWORD | Hide the "paste your own key" option; only the gateway may be used |
+| `DisableUserKeys` | `1` | REG_DWORD | Hide the "paste your own key" option and ignore personal keys in `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; only the gateway may be used |
+
+Gateway URLs must use `https://` (plain `http://` is accepted only for `localhost`), so a token is never sent in clear text. A gateway URL that fails this check is reported in Settings, and the app does not fall back to personal keys.
 
 Precedence when the app chooses credentials: **gateway → environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) → user-entered key**. The Settings page always tells the user which one is in use.
 

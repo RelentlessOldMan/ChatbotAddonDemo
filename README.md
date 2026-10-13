@@ -79,7 +79,7 @@ The important points:
 
 - **Nothing in our apps "calls MCP".** MCP is a door *into* the console tool for coding agents.
 - **The model never touches files or the bench.** It can only *ask* for a tool; our code decides and runs it.
-- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. All four paths end in the same bench logic, so the same rules apply to everyone.
+- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same bench logic, so the same rules apply to everyone.
 - **MCP inside the desktop app is optional and not built.** The design explains when you'd want it and what it would take to secure.
 
 **Full explanation, with step-by-step sequence diagrams: [docs/design.md](docs/design.md).**
@@ -132,7 +132,7 @@ dotnet build ChatbotAddonDemo.sln
 # Desktop app in demo mode: fresh example workspace, scripted assistant, no key needed
 .\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe --demo
 
-# Desktop app for real (workspace in %LOCALAPPDATA%\ChatbotAddonDemo); turn on AI in Settings
+# Desktop app for real (workspace in %LOCALAPPDATA%\ChatbotAddonDemo\workspace); turn on AI in Settings
 .\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe
 
 # Console tool

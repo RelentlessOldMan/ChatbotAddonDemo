@@ -33,7 +33,7 @@ command = 'C:\Program Files\TestBench\demo-cli.exe'
 args = ["mcp", "--allow-writes", "--allow-runs"]
 ```
 
-To use a specific workspace folder, add `"--workspace", "D:\\Lab\\workspace"` before `"mcp"` (or set `DEMO_WORKSPACE`).
+To use a specific workspace folder, add `"--workspace", "D:\\Lab\\workspace"` to the arguments (or set `DEMO_WORKSPACE`).
 
 ## What the agent sees
 
@@ -41,9 +41,9 @@ To use a specific workspace folder, add `"--workspace", "D:\\Lab\\workspace"` be
 
 - Every tool has a description written for models, a JSON schema, and annotations: `readOnlyHint: true` means it only reads, and `openWorldHint: true` means it drives the bench.
 - The server sends instructions on connect: the workflow (spec → plan → run → analysis) and rules such as "don't compute statistics yourself; use `get_run_summary`".
-- Rule violations come back as readable results the agent can act on, e.g. `{"error": "Temperature 200 °C is outside the bench range -55 to 150 °C."}`.
+- Rule violations come back as tool errors (`isError: true`) with a readable message the agent can act on, e.g. "Temperature 200 °C is outside the bench range -55 to 150 °C."
 - Results include **absolute file paths** (`results.csv`, `plots\IQ.png`, `report.html`), so an agent with file access can open them for its own analysis.
-- Runs take time: call `start_test_run`, then `wait_for_test_run` (up to 120 s per call), then `get_run_summary`. If the session ends mid-run, the run is marked *Interrupted*.
+- Runs take time: call `start_test_run`, then `wait_for_test_run` (up to 120 s per call), then `get_run_summary`. If the session ends mid-run, the tool cancels the run (status *Cancelled*); if it's killed outright, the run shows as *Interrupted* after about 15 s.
 
 ## "Couldn't my agent just run demo-cli commands in a shell?"
 Yes, and that works too (`demo-cli run TP-1002`, `demo-cli summary R-1002`). MCP adds typed tools with descriptions, structured results instead of console text, and the same read / write / run permission tiers the chat assistant has. It also works in agents that have no shell.
