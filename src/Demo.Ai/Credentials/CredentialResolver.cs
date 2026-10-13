@@ -10,6 +10,12 @@ public sealed record ResolvedCredential(CredentialSource Source, string? ApiKey 
 {
     public static readonly ResolvedCredential None = new(CredentialSource.None);
 
+    /// <summary>Nothing usable, because of a configuration problem the user (or IT) should read about.</summary>
+    public static ResolvedCredential Unusable(string problem) => new(CredentialSource.None) { Problem = problem };
+
+    /// <summary>Why no credential is available, when it's a misconfiguration rather than simply nothing set up.</summary>
+    public string? Problem { get; init; }
+
     public bool IsAvailable => Source != CredentialSource.None;
 
     public string Describe() => Source switch
@@ -17,7 +23,7 @@ public sealed record ResolvedCredential(CredentialSource Source, string? ApiKey 
         CredentialSource.Gateway => $"Your organization's AI gateway ({BaseUrl?.Host})",
         CredentialSource.EnvironmentVariable => "API key from an environment variable",
         CredentialSource.UserKey => $"Your saved API key ({Mask(ApiKey)})",
-        _ => "Not configured",
+        _ => Problem ?? "Not configured",
     };
 
     public static string Mask(string? key) =>
@@ -83,10 +89,16 @@ public sealed class CredentialResolver(
     public ResolvedCredential Resolve(AiProvider provider)
     {
         if (policy.GatewayUrl(provider) is { } gateway)
-            return new ResolvedCredential(CredentialSource.Gateway, policy.GatewayToken(provider), gateway);
+        {
+            // Never fall back to personal keys when IT has set a gateway, even a misconfigured one.
+            return IsSecure(gateway)
+                ? new ResolvedCredential(CredentialSource.Gateway, policy.GatewayToken(provider), gateway)
+                : ResolvedCredential.Unusable($"The AI gateway address set by your administrator ({gateway.Scheme}://{gateway.Authority}) doesn't use https, so it isn't used. Ask IT to change it to https.");
+        }
 
+        // DisableUserKeys covers every personal key, including one in an environment variable.
         var info = ProviderInfo.For(provider);
-        if (_environment(info.ApiKeyEnvironmentVariable) is { Length: > 0 } envKey)
+        if (UserKeysAllowed && _environment(info.ApiKeyEnvironmentVariable) is { Length: > 0 } envKey)
             return new ResolvedCredential(CredentialSource.EnvironmentVariable, envKey);
 
         if (UserKeysAllowed && store.Get(KeyName(provider)) is { Length: > 0 } userKey)
@@ -94,6 +106,10 @@ public sealed class CredentialResolver(
 
         return ResolvedCredential.None;
     }
+
+    /// <summary>The gateway token travels with every request, so only https is allowed (plain http only to this PC).</summary>
+    private static bool IsSecure(Uri gateway) =>
+        gateway.Scheme == Uri.UriSchemeHttps || (gateway.Scheme == Uri.UriSchemeHttp && gateway.IsLoopback);
 
     public void SaveUserKey(AiProvider provider, string key)
     {

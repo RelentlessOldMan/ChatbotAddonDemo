@@ -36,6 +36,8 @@ public sealed partial class MainViewModel : ObservableObject
         _watcher.Created += (_, _) => ScheduleRefresh();
         _watcher.Changed += (_, _) => ScheduleRefresh();
         _watcher.Renamed += (_, _) => ScheduleRefresh();
+        _watcher.Deleted += (_, _) => ScheduleRefresh();
+        _watcher.Error += (_, _) => ScheduleRefresh(); // e.g. buffer overflow: events were lost, so re-read everything
 
         Refresh(initial: true);
         ApplySettings();
@@ -159,6 +161,7 @@ public sealed partial class MainViewModel : ObservableObject
     public void ApplySettings()
     {
         var settings = _services.Settings.Load();
+        Chat?.Shutdown(); // the old panel's request, if any, must not keep running (or billing) in the background
         Chat = settings.ChatEnabled ? new ChatViewModel(_services, settings, OpenSettings) : null;
         IsChatOpen = true;
     }

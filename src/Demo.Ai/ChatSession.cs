@@ -60,6 +60,8 @@ public sealed class ChatSession
                 f.MaximumIterationsPerRequest = options.MaxToolIterations;
                 f.IncludeDetailedErrors = false; // Unexpected exception text can contain internals; domain errors are already results.
             })
+            // Added after (so inside) function invocation: it sees and limits every request, tool round trips included.
+            .Use(inner => new MeteringChatClient(inner, meter))
             .Build();
 
         _chatOptions = new ChatOptions
@@ -75,16 +77,34 @@ public sealed class ChatSession
 
     public IReadOnlyList<ChatMessage> History => _history;
 
+    /// <summary>
+    /// Sends one user message and runs it to completion, asking <paramref name="approve"/> about each change.
+    /// The spending limit is enforced before every model request by <see cref="MeteringChatClient"/>.
+    /// If anything fails or is cancelled, the conversation is restored to how it was before this message, so a
+    /// half-finished turn (such as an approval request with no answer) can't break the next one.
+    /// </summary>
     public async Task<ChatTurn> SendAsync(string text, ApprovalHandler approve, CancellationToken cancellationToken = default)
     {
-        Meter.EnsureUnderCap();
+        var historyCount = _history.Count;
+        try
+        {
+            return await RunTurnAsync(text, approve, cancellationToken);
+        }
+        catch
+        {
+            _history.RemoveRange(historyCount, _history.Count - historyCount);
+            throw;
+        }
+    }
+
+    private async Task<ChatTurn> RunTurnAsync(string text, ApprovalHandler approve, CancellationToken cancellationToken)
+    {
         var turn = new List<ChatMessage>();
         Append(new ChatMessage(ChatRole.User, text), turn);
 
         while (true)
         {
             var response = await _client.GetResponseAsync(_history, _chatOptions, cancellationToken);
-            Meter.Add(response.Usage);
             foreach (var message in response.Messages) Append(message, turn);
 
             var pending = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
@@ -93,12 +113,18 @@ public sealed class ChatSession
             var decisions = new List<AIContent>();
             foreach (var request in pending)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var call = (FunctionCallContent)request.ToolCall;
-                var approved = await approve(new ApprovalRequest(call.CallId, _catalog[call.Name], call.Arguments?.AsReadOnly() ?? EmptyArguments), cancellationToken);
+                // The model can name a tool that doesn't exist: refuse it instead of asking the user about nothing.
+                if (_catalog.Capabilities.FirstOrDefault(c => c.Name == call.Name) is not { } capability)
+                {
+                    decisions.Add(request.CreateResponse(false, $"There is no tool named '{call.Name}'."));
+                    continue;
+                }
+                var approved = await approve(new ApprovalRequest(call.CallId, capability, call.Arguments?.AsReadOnly() ?? EmptyArguments), cancellationToken);
                 decisions.Add(request.CreateResponse(approved, approved ? null : "The user declined this action."));
             }
             Append(new ChatMessage(ChatRole.User, decisions), turn);
-            Meter.EnsureUnderCap();
         }
     }
 

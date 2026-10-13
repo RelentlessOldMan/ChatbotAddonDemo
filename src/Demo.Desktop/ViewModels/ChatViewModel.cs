@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -15,7 +17,9 @@ public sealed partial class ChatViewModel : ObservableObject
     private readonly AiSettings _settings;
     private readonly Dictionary<string, ChatItem> _itemsByCallId = [];
     private ChatSession? _session;
+    private Action? _detachSession;
     private CancellationTokenSource? _cts;
+    private int _generation;
 
     public ChatViewModel(AppServices services, AiSettings settings, Action openSettings)
     {
@@ -62,11 +66,18 @@ public sealed partial class ChatViewModel : ObservableObject
         var text = Input.Trim();
         Input = "";
         IsBusy = true;
-        _cts = new CancellationTokenSource();
+        // New chat or closing the panel bumps the generation; a request from an older one then finishes silently.
+        var generation = _generation;
+        using var cts = new CancellationTokenSource();
+        _cts = cts;
         try
         {
             _session ??= CreateSession();
-            await _session.SendAsync(text, ApproveAsync, _cts.Token);
+            await _session.SendAsync(text, (request, ct) => ApproveAsync(request, generation, ct), cts.Token);
+        }
+        catch (Exception) when (generation != _generation)
+        {
+            // This chat was cleared or closed while the request was in flight: nothing left to report to.
         }
         catch (OperationCanceledException)
         {
@@ -83,10 +94,12 @@ public sealed partial class ChatViewModel : ObservableObject
         }
         finally
         {
-            foreach (var pending in Items.OfType<ApprovalItem>().Where(a => a.IsPending)) pending.Cancel();
-            IsBusy = false;
-            _cts.Dispose();
-            _cts = null;
+            if (generation == _generation)
+            {
+                CancelPendingApprovals();
+                IsBusy = false;
+                _cts = null;
+            }
         }
     }
 
@@ -98,27 +111,62 @@ public sealed partial class ChatViewModel : ObservableObject
     [RelayCommand]
     private void NewChat()
     {
-        _cts?.Cancel();
-        _session = null;
+        EndSession();
         _itemsByCallId.Clear();
         Items.Clear();
         UsageSummary = "No usage yet";
     }
 
+    /// <summary>
+    /// Called when this panel is replaced (Settings changed) or closed: cancels any request in flight and
+    /// pending approvals, and stops listening to the old session so late events can't touch anything.
+    /// </summary>
+    public void Shutdown() => EndSession();
+
+    private void EndSession()
+    {
+        _generation++;
+        _cts?.Cancel();
+        _cts = null;
+        CancelPendingApprovals();
+        _detachSession?.Invoke();
+        _detachSession = null;
+        _session = null;
+        IsBusy = false;
+    }
+
+    private void CancelPendingApprovals()
+    {
+        foreach (var pending in Items.OfType<ApprovalItem>().Where(a => a.IsPending).ToList()) pending.Cancel();
+    }
+
     private ChatSession CreateSession()
     {
         var meter = new UsageMeter(Model, _settings.SessionSpendCapUsd);
-        meter.Changed += (_, _) => UsageSummary = meter.Summary + " (estimate)";
+        // Token counts come from the provider; only the dollar figure is an estimate.
+        EventHandler onUsage = (_, _) => UsageSummary = meter.Summary + (meter.EstimatedCostUsd is null ? "" : " (estimate)");
+        meter.Changed += onUsage;
         var session = new ChatSession(_services.CreateChatClient(_settings), _services.Catalog, meter, _services.ChatOptions);
         session.MessageAdded += Render;
+        _detachSession = () =>
+        {
+            meter.Changed -= onUsage;
+            session.MessageAdded -= Render;
+        };
         return session;
     }
 
-    private async Task<bool> ApproveAsync(ApprovalRequest request, CancellationToken cancellationToken)
+    private async Task<bool> ApproveAsync(ApprovalRequest request, int generation, CancellationToken cancellationToken)
     {
-        var heading = request.Capability.Safety == SafetyClass.Execute
-            ? "The assistant wants to use the test bench"
-            : "The assistant wants to create a file";
+        // A request from a chat that has since been cleared or closed must never show a card in the new one.
+        if (generation != _generation) throw new OperationCanceledException(cancellationToken);
+        var heading = request.Capability.Safety switch
+        {
+            SafetyClass.Execute => "The assistant wants to use the test bench",
+            SafetyClass.Write => "The assistant wants to create a file",
+            // A read normally runs without asking, but is asked about when it comes in the same reply as a change.
+            _ => "The assistant wants to look something up",
+        };
         var item = new ApprovalItem(heading, request.Capability.Title, FormatArguments(request.Arguments));
         _itemsByCallId[request.CallId] = item;
         Items.Add(item);
@@ -165,12 +213,35 @@ public sealed partial class ChatViewModel : ObservableObject
         }
     }
 
-    /// <summary>One line per argument; strings bare, everything else (numbers, lists) as compact JSON.</summary>
+    private const int MaxArgumentLength = 200;
+
+    /// <summary>
+    /// One line per argument; strings bare, everything else (numbers, lists) as compact JSON. The values come from
+    /// the model, so each is forced onto one line (a value with line breaks can't pass for extra arguments) and cut short.
+    /// </summary>
     private static string FormatArguments(IReadOnlyDictionary<string, object?> arguments) =>
-        string.Join("\n", arguments.Select(a => $"{a.Key}: {a.Value switch
+        string.Join("\n", arguments.Select(a => $"{OneLine(a.Key)}: {OneLine(a.Value switch
         {
-            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString(),
+            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString() ?? "",
             string s => s,
             var v => JsonSerializer.Serialize(v, CapabilityCatalog.SerializerOptions),
-        }}"));
+        })}"));
+
+    private static string OneLine(string value)
+    {
+        var text = new StringBuilder(Math.Min(value.Length, MaxArgumentLength + 10));
+        foreach (var c in value)
+        {
+            if (text.Length >= MaxArgumentLength) return text.Append('…').ToString();
+            text.Append(c switch
+            {
+                '\r' => @"\r",
+                '\n' => @"\n",
+                '\t' => @"\t",
+                _ when char.IsControl(c) || char.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator => $@"\u{(int)c:x4}",
+                _ => c.ToString(),
+            });
+        }
+        return text.ToString();
+    }
 }

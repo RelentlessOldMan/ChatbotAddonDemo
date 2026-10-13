@@ -30,7 +30,7 @@ public sealed partial class ToolItem(string title, string name) : ChatItem
     [ObservableProperty] private bool _isDone;
 }
 
-public enum ApprovalState { Pending, Approved, Denied }
+public enum ApprovalState { Pending, Approved, Denied, Cancelled }
 
 /// <summary>A change the assistant wants to make. Nothing happens until the user clicks Approve.</summary>
 public sealed partial class ApprovalItem : ChatItem
@@ -65,7 +65,13 @@ public sealed partial class ApprovalItem : ChatItem
     [RelayCommand]
     private void Deny() => Decide(false);
 
-    public void Cancel() => _decision.TrySetCanceled();
+    /// <summary>Stop, New chat or an error ended the request before the user decided. Nothing ran.</summary>
+    public void Cancel()
+    {
+        if (!IsPending) return;
+        State = ApprovalState.Cancelled;
+        _decision.TrySetCanceled();
+    }
 
     private void Decide(bool approved)
     {

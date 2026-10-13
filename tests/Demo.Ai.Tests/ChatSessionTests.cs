@@ -114,12 +114,123 @@ public sealed class ChatSessionTests : IDisposable
     }
 
     [Fact]
+    public async Task Spend_cap_is_checked_before_every_tool_round_trip()
+    {
+        // The first request costs $0.80 + output; projecting the next one at a similar size would pass $1.
+        var model = new ScriptedChatClient([Call("get_bench_info", inputTokens: 200_000, outputTokens: 50), Reply("never sent")]);
+        var session = Session(model, cap: 1.00m);
+
+        await Assert.ThrowsAsync<SpendCapExceededException>(() => session.SendAsync("parts?", Answer(true)));
+
+        Assert.Equal(1, model.RemainingSteps);
+        Assert.Single(model.Requests);
+        Assert.Equal(200_000, session.Meter.InputTokens); // the completed request still counts
+    }
+
+    [Fact]
+    public async Task Usage_of_completed_requests_is_kept_when_a_later_request_fails()
+    {
+        var model = new ScriptedChatClient([Call("get_bench_info", inputTokens: 1000, outputTokens: 50), _ => throw new HttpRequestException("outage")]);
+        var session = Session(model);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => session.SendAsync("parts?", Answer(true)));
+
+        Assert.Equal(1000, session.Meter.InputTokens);
+        Assert.Equal(50, session.Meter.OutputTokens);
+    }
+
+    [Fact]
+    public async Task First_request_is_refused_when_even_its_estimate_exceeds_the_cap()
+    {
+        var model = new ScriptedChatClient([Reply("never sent")]);
+        var session = Session(model, cap: 0.01m);
+
+        // ≈ 10,000 input tokens at $4/MTok + the output allowance ≈ $0.06 > $0.01.
+        await Assert.ThrowsAsync<SpendCapExceededException>(() => session.SendAsync(new string('x', 40_000), Answer(true)));
+
+        Assert.Empty(model.Requests);
+    }
+
+    [Fact]
     public async Task Unknown_model_prices_report_tokens_only()
     {
-        var session = Session(new ScriptedChatClient([Reply("hi")]), cap: 0.01m, priced: "some-new-model");
+        var session = Session(new ScriptedChatClient([Reply("hi", inputTokens: 80_000, outputTokens: 4_000)]), cap: 0.01m, priced: "some-new-model");
         await session.SendAsync("hi", Answer(true));
         Assert.Null(session.Meter.EstimatedCostUsd);
-        Assert.DoesNotContain("$0.0", session.Meter.Summary.Split('(')[0]);
+        Assert.Equal(AiSettings.DefaultUnpricedTokenLimit, session.Meter.TokenLimit);
+        Assert.Equal("84,000 tokens (limit 500k tokens; no price known for some-new-model)", session.Meter.Summary);
+    }
+
+    [Fact]
+    public async Task Unknown_model_prices_enforce_a_token_limit_instead()
+    {
+        var model = new ScriptedChatClient([Reply("big", inputTokens: 499_000, outputTokens: 500), Reply("never sent")]);
+        var session = Session(model, cap: 1.00m, priced: "some-new-model");
+
+        await session.SendAsync("first", Answer(true));
+        var refused = await Assert.ThrowsAsync<SpendCapExceededException>(() => session.SendAsync("second", Answer(true)));
+
+        Assert.Contains("500,000 tokens", refused.Message);
+        Assert.Equal(1, model.RemainingSteps);
+    }
+
+    [Fact]
+    public void No_limit_means_no_token_limit_either()
+    {
+        var meter = new UsageMeter("some-new-model", capUsd: null);
+        meter.Add(new UsageDetails { InputTokenCount = 10_000_000 });
+        meter.EnsureCanAfford([new ChatMessage(ChatRole.User, "hi")]);
+        Assert.Null(meter.TokenLimit);
+        Assert.Equal("10,000,000 in / 0 out tokens", meter.Summary);
+    }
+
+    [Fact]
+    public async Task Cancelling_during_approval_leaves_the_chat_usable()
+    {
+        var model = new ScriptedChatClient(
+        [
+            Call("start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }),
+            Reply("Hello again."),
+        ]);
+        var session = Session(model);
+        using var cts = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("Run TP-1001", async (_, ct) =>
+        {
+            await cts.CancelAsync();
+            ct.ThrowIfCancellationRequested();
+            return true;
+        }, cts.Token));
+        Assert.Single(session.History); // just the system prompt: the unfinished turn was rolled back
+
+        var turn = await session.SendAsync("hello", Answer(true));
+
+        Assert.Equal("Hello again.", turn.Text);
+        Assert.Equal(["hello"], model.Requests[1].Skip(1).Select(m => m.Text));
+        Assert.Single(_bench.ListRuns()); // nothing was started
+    }
+
+    [Fact]
+    public async Task Invented_tool_names_are_refused_without_asking()
+    {
+        // A write next to a made-up tool: the function-invocation layer asks approval for both.
+        var model = new ScriptedChatClient(
+        [
+            _ => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("call_real", "start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }),
+                new FunctionCallContent("call_fake", "format_bench_disk"),
+            ])) { FinishReason = ChatFinishReason.ToolCalls },
+            Reply("Done."),
+        ]);
+
+        var turn = await Session(model).SendAsync("Run TP-1001", Answer(true));
+
+        Assert.Equal("Done.", turn.Text);
+        Assert.Equal("start_test_run", Assert.Single(_approvalsAsked).Capability.Name);
+        Assert.Equal(2, _bench.ListRuns().Count);
+        var results = model.Requests[1].SelectMany(m => m.Contents).OfType<FunctionResultContent>().ToList();
+        Assert.Contains("no tool named 'format_bench_disk'", results.Single(r => r.CallId == "call_fake").Result?.ToString());
     }
 
     [Fact]

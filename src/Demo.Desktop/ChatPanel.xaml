@@ -53,6 +53,11 @@
                                         <Setter Property="Foreground" Value="{StaticResource Bad}"/>
                                         <Setter Property="Text" Value="✕ Denied by you, nothing was changed"/>
                                     </DataTrigger>
+                                    <DataTrigger Binding="{Binding State}" Value="Cancelled">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                                        <Setter Property="Text" Value="Cancelled, nothing was changed"/>
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>

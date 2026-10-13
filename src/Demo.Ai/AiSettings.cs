@@ -19,6 +19,12 @@ public sealed record AiSettings
     /// <summary>Optional spend cap per chat session, in USD. Null = no cap.</summary>
     public decimal? SessionSpendCapUsd { get; init; } = 1.00m;
 
+    /// <summary>
+    /// Used instead of the dollar limit when the model's price is unknown (see <see cref="PriceTable"/>), so a
+    /// limit set in Settings never silently does nothing. Applies only while <see cref="SessionSpendCapUsd"/> is set.
+    /// </summary>
+    public const long DefaultUnpricedTokenLimit = 500_000;
+
     public string ModelFor(AiProvider provider) =>
         Models.TryGetValue(provider, out var model) && !string.IsNullOrWhiteSpace(model)
             ? model

@@ -1,6 +1,7 @@
 using System.Text;
 using Demo.Ai;
 using Demo.Ai.Credentials;
+using Microsoft.Extensions.AI;
 
 namespace Demo.Ai.Tests;
 
@@ -63,6 +64,61 @@ public class CredentialTests
 
         Assert.False(resolver.Resolve(AiProvider.Anthropic).IsAvailable);
         Assert.Throws<InvalidOperationException>(() => resolver.SaveUserKey(AiProvider.Anthropic, "x"));
+    }
+
+    [Fact]
+    public void Policy_that_disables_personal_keys_also_ignores_environment_keys()
+    {
+        var env = new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "env-key" };
+
+        Assert.False(Resolver(new InMemoryCredentialStore(), new FakePolicy(disableUserKeys: true), env).Resolve(AiProvider.Anthropic).IsAvailable);
+
+        var gateway = Resolver(new InMemoryCredentialStore(), new FakePolicy(new Uri("https://llm.corp.example/"), disableUserKeys: true), env).Resolve(AiProvider.Anthropic);
+        Assert.Equal(CredentialSource.Gateway, gateway.Source);
+    }
+
+    [Theory]
+    [InlineData("http://llm.corp.example/anthropic")]
+    [InlineData("ftp://llm.corp.example/")]
+    public void Gateway_must_use_https(string url)
+    {
+        var store = new InMemoryCredentialStore();
+        store.Set(CredentialResolver.KeyName(AiProvider.Anthropic), "user-key");
+
+        var resolved = Resolver(store, new FakePolicy(new Uri(url), "gw-token")).Resolve(AiProvider.Anthropic);
+
+        Assert.False(resolved.IsAvailable); // and no fallback to the personal key
+        Assert.Null(resolved.ApiKey);
+        Assert.Contains("doesn't use https", resolved.Describe());
+        var refused = Assert.Throws<InvalidOperationException>(() => ChatClientFactory.Create(AiProvider.Anthropic, "m", resolved));
+        Assert.Contains("https", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:4000/")]
+    [InlineData("http://127.0.0.1:4000/")]
+    [InlineData("http://[::1]:4000/")]
+    public void Gateway_on_this_pc_may_use_http(string url) =>
+        Assert.Equal(CredentialSource.Gateway, Resolver(new InMemoryCredentialStore(), new FakePolicy(new Uri(url))).Resolve(AiProvider.OpenAI).Source);
+
+    [Fact]
+    public void OpenAI_storage_stays_off_even_with_a_caller_supplied_options_factory()
+    {
+#pragma warning disable OPENAI001
+        using var client = new ScriptedChatClient([]);
+        var fromCaller = ChatClientFactory.WithStorageOff(_ => new OpenAI.Responses.CreateResponseOptions { StoredOutputEnabled = true, Instructions = "from caller" });
+        var raw = Assert.IsType<OpenAI.Responses.CreateResponseOptions>(fromCaller(client));
+        Assert.False(raw.StoredOutputEnabled);
+        Assert.Equal("from caller", raw.Instructions);
+        Assert.Contains(OpenAI.Responses.IncludedResponseProperty.ReasoningEncryptedContent, raw.IncludedProperties);
+
+        foreach (var other in new Func<IChatClient, object?>?[] { null, _ => null, _ => "not options" })
+        {
+            var made = Assert.IsType<OpenAI.Responses.CreateResponseOptions>(ChatClientFactory.WithStorageOff(other)(client));
+            Assert.False(made.StoredOutputEnabled);
+            Assert.Single(made.IncludedProperties);
+        }
+#pragma warning restore OPENAI001
     }
 
     [Fact]

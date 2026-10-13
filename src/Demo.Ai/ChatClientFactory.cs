@@ -18,7 +18,7 @@ public static class ChatClientFactory
     public static IChatClient Create(AiProvider provider, string model, ResolvedCredential credential)
     {
         if (!credential.IsAvailable)
-            throw new InvalidOperationException($"No credentials are configured for {ProviderInfo.For(provider).DisplayName}.");
+            throw new InvalidOperationException(credential.Problem ?? $"No credentials are configured for {ProviderInfo.For(provider).DisplayName}.");
 
         return provider switch
         {
@@ -48,8 +48,22 @@ public static class ChatClientFactory
         // so storage is off and the full conversation is sent with each request (as with Anthropic).
         return client.GetResponsesClient().AsIChatClient(model)
             .AsBuilder()
-            .ConfigureOptions(o => o.RawRepresentationFactory ??= _ => new CreateResponseOptions { StoredOutputEnabled = false })
+            .ConfigureOptions(o => o.RawRepresentationFactory = WithStorageOff(o.RawRepresentationFactory))
             .Build();
     }
+
+    /// <summary>
+    /// Wraps a caller's raw-options factory (if any) so storage is off whatever it returns. With storage off,
+    /// reasoning items can't be referenced by id on the next request, so their encrypted content is requested
+    /// and sent back instead.
+    /// </summary>
+    internal static Func<IChatClient, object?> WithStorageOff(Func<IChatClient, object?>? callerFactory) => chatClient =>
+    {
+        var raw = callerFactory?.Invoke(chatClient) as CreateResponseOptions ?? new CreateResponseOptions();
+        raw.StoredOutputEnabled = false;
+        if (!raw.IncludedProperties.Contains(IncludedResponseProperty.ReasoningEncryptedContent))
+            raw.IncludedProperties.Add(IncludedResponseProperty.ReasoningEncryptedContent);
+        return raw;
+    };
 #pragma warning restore OPENAI001
 }
