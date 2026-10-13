@@ -1,18 +1,20 @@
 using System.Globalization;
 using System.Reflection;
 using Demo.Capabilities;
-using Demo.Capabilities.Workshop;
+using Demo.Capabilities.TestBench;
+using Demo.Cli;
 using Demo.Domain;
-using Demo.Mcp;
 using ModelContextProtocol.Protocol;
 
-// demo-cli: the "legacy" batch/console tool. Ordinary commands work exactly as before;
-// `mcp` turns the same process into an MCP server for coding agents (docs/adr/004-mcp-transports.md).
+// demo-cli: the "legacy" console tool for scripted and batch work. Ordinary commands call the
+// domain directly, exactly as before AI existed. `demo-cli mcp` turns the same process into an MCP
+// server that a coding agent starts and talks to over stdin/stdout (docs/adr/004-mcp-transport.md).
 
+Console.OutputEncoding = System.Text.Encoding.UTF8; // units like µA and °C
 var argList = args.ToList();
-var dataPath = TakeOption(argList, "--data")
-    ?? Environment.GetEnvironmentVariable("DEMO_DATA")
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatbotAddonDemo", "workshop.json");
+var workspace = TakeOption(argList, "--workspace")
+    ?? Environment.GetEnvironmentVariable("DEMO_WORKSPACE")
+    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatbotAddonDemo", "workspace");
 
 if (argList.Count == 0 || argList[0] is "help" or "--help" or "-h")
 {
@@ -20,50 +22,69 @@ if (argList.Count == 0 || argList[0] is "help" or "--help" or "-h")
     return 0;
 }
 
-var service = new WorkshopService(new JsonFileDataStore(dataPath));
+var bench = new TestBenchService(workspace, BenchOptions.FromEnvironment());
+var inv = CultureInfo.InvariantCulture;
 
 try
 {
     switch (argList[0])
     {
-        case "orders":
-            var status = TakeOption(argList, "--status") is { } s ? Enum.Parse<OrderStatus>(s, ignoreCase: true) : (OrderStatus?)null;
-            PrintOrders(service.ListOrders(status, TakeOption(argList, "--customer")));
+        case "specs":
+            foreach (var spec in bench.ListSpecs())
+                Console.WriteLine($"{spec.FileName,-30} {spec.Device,-10} {string.Join(", ", spec.Parameters.Select(p => p.Parameter))}");
             return 0;
 
-        case "overdue":
-            Console.WriteLine($"Overdue as of {service.Today:yyyy-MM-dd}:");
-            PrintOrders(service.ListOverdueOrders());
+        case "plans":
+            Console.WriteLine($"{"PLAN",-8} {"DEVICE",-9} {"MEAS",5}  NAME");
+            foreach (var p in bench.ListPlans())
+                Console.WriteLine($"{p.Id,-8} {p.Device,-9} {p.MeasurementCount,5}  {p.Name}");
             return 0;
 
-        case "parts":
-            PrintParts(TakeFlag(argList, "--low") ? service.ListLowStockParts() : service.ListParts());
+        case "plan" when argList.Count >= 3 && argList[1] == "show":
+            Console.Write(bench.GetPlanXml(argList[2]));
             return 0;
 
-        case "complete" when argList.Count >= 3:
-            var done = service.CompleteOrder(argList[1], string.Join(' ', argList.Skip(2)));
-            Console.WriteLine($"{done.Id} completed.");
+        case "plan" when argList.Count >= 3 && argList[1] == "from-spec":
+            var made = bench.CreatePlanFromSpec(argList[2], TakeOption(argList, "--name"),
+                Numbers(TakeOption(argList, "--temps")), Numbers(TakeOption(argList, "--supplies")), Numbers(TakeOption(argList, "--loads")),
+                int.Parse(TakeOption(argList, "--samples") ?? "3", inv), TakeOption(argList, "--tests")?.Split(','));
+            Console.WriteLine($"Created {made.Plan.Id} ({made.Plan.MeasurementCount} measurements): {bench.PlanPath(made.Plan.Id)}");
+            if (made.SkippedParameters.Count > 0) Console.WriteLine($"Skipped (bench cannot measure): {string.Join(", ", made.SkippedParameters)}");
             return 0;
 
-        case "adjust" when argList.Count >= 4:
-            var part = service.AdjustStock(argList[1], int.Parse(argList[2], CultureInfo.InvariantCulture), string.Join(' ', argList.Skip(3)));
-            Console.WriteLine($"{part.Sku} on hand: {part.OnHand}");
+        case "plan" when argList.Count >= 3 && argList[1] == "import":
+            var imported = bench.ImportPlan(argList[2]);
+            Console.WriteLine($"Imported as {imported.Id}: {bench.PlanPath(imported.Id)}");
             return 0;
 
-        case "import" when argList.Count == 2:
-            return Import(service, argList[1]);
+        case "run" when argList.Count >= 2:
+            return await Run(bench, argList[1]);
 
-        case "report":
-            var outPath = TakeOption(argList, "--out") ?? "orders-report.csv";
-            WriteReport(service, outPath);
-            Console.WriteLine($"Wrote {outPath}");
+        case "runs":
+            Console.WriteLine($"{"RUN",-7} {"PLAN",-8} {"STATUS",-11} {"DONE",9} {"FAILED",6}  STARTED");
+            foreach (var r in bench.ListRuns(TakeOption(argList, "--plan")))
+                Console.WriteLine($"{r.Id,-7} {r.PlanId,-8} {r.Status,-11} {$"{r.Completed}/{r.Total}",9} {r.Failed,6}  {r.Started:yyyy-MM-dd HH:mm}");
+            return 0;
+
+        case "summary" when argList.Count >= 2:
+            PrintSummary(bench.Analyze(argList[1], Filter(argList)));
+            return 0;
+
+        case "query" when argList.Count >= 2:
+            var rows = bench.GetMeasurements(argList[1], Filter(argList) with { FailedOnly = TakeFlag(argList, "--failed") });
+            Console.WriteLine(ResultFiles.CsvHeader);
+            foreach (var m in rows) Console.WriteLine(ResultFiles.ToCsvLine(m));
+            return 0;
+
+        case "report" when argList.Count >= 2:
+            Console.WriteLine($"Wrote {bench.GenerateReport(argList[1])}");
             return 0;
 
         case "mcp":
-            var policy = new McpExposurePolicy(AllowWrites: TakeFlag(argList, "--allow-writes"));
-            var catalog = CapabilityCatalog.FromObject(new WorkshopCapabilities(service));
+            var policy = new McpExposurePolicy(AllowWrites: TakeFlag(argList, "--allow-writes"), AllowRuns: TakeFlag(argList, "--allow-runs"));
+            var catalog = CapabilityCatalog.FromObject(new TestBenchCapabilities(bench));
             var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
-            await StdioMcpHost.RunAsync(catalog, policy, new Implementation { Name = McpClientConfig.CliServerName, Version = version });
+            await StdioMcpHost.RunAsync(catalog, policy, new Implementation { Name = McpClientConfig.ServerName, Version = version }, TestBenchCapabilities.Instructions);
             return 0;
 
         default:
@@ -77,66 +98,65 @@ catch (DomainException ex)
     return 1;
 }
 
+static async Task<int> Run(TestBenchService bench, string planId)
+{
+    var run = bench.StartRun(planId);
+    Console.WriteLine($"{run.Id}: running {run.PlanId} ({run.Total} measurements)");
+    var lastShown = -1;
+    while (run.Status == RunStatus.Running)
+    {
+        run = await bench.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(1));
+        var tenth = run.PercentComplete / 10;
+        if (tenth != lastShown && run.Status == RunStatus.Running) { Console.WriteLine($"  {run.PercentComplete,3}%  {run.Failed} failed so far"); lastShown = tenth; }
+    }
+    Console.WriteLine($"{run.Id}: {run.Status}. Files: {bench.Files(run.Id).Folder}");
+    if (run.Status != RunStatus.Completed) return 1;
+    PrintSummary(bench.Analyze(run.Id, MeasurementFilter.All));
+    return 0;
+}
+
+static void PrintSummary(RunSummary s)
+{
+    Console.WriteLine($"{s.RunId} ({s.Device}, {s.Scope}): {s.Measurements} measurements, {s.Failed} failed → {s.Verdict}");
+    foreach (var f in s.Findings) Console.WriteLine($"  [{f.Severity}] {f.Text}");
+}
+
+static MeasurementFilter Filter(List<string> args)
+{
+    var inv = CultureInfo.InvariantCulture;
+    double? D(string name) => TakeOption(args, name) is { } v ? double.Parse(v, inv) : null;
+    return new MeasurementFilter(TakeOption(args, "--test"), D("--temp"), D("--supply"), null,
+        TakeOption(args, "--dut") is { } dut ? int.Parse(dut, inv) : null);
+}
+
+static double[]? Numbers(string? csv) =>
+    csv?.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+
 static void PrintHelp() => Console.WriteLine(
     """
-    demo-cli — Workshop batch tool
+    demo-cli — TestBench console tool
 
-    Usage: demo-cli [--data <file.json>] <command>
+    Usage: demo-cli [--workspace <folder>] <command>
 
-      orders [--status Open|InProgress|Completed] [--customer <text>]
-      overdue                          List overdue work orders
-      parts [--low]                    List parts (or only low stock)
-      complete <WO-id> <note...>       Complete a work order
-      adjust <sku> <delta> <reason...> Adjust stock
-      import <file.csv>                Create orders from CSV: title,customer,yyyy-MM-dd,priority
-      report [--out <file.csv>]        Export all orders to CSV
+      specs                              List spec sheets (design files) in the workspace
+      plans                              List test plans
+      plan show <TP-id>                  Print a plan's XML
+      plan from-spec <spec-file> --temps -40,25,125 --supplies 3.6,5 [--loads 100]
+                     [--samples 3] [--tests IQ,VOUT] [--name <text>]
+                                         Create a plan with limits copied from a spec sheet
+      plan import <file.xml>             Validate and add a plan written elsewhere
+      run <TP-id>                        Run a plan on the bench and print the findings
+      runs [--plan <TP-id>]              List runs
+      summary <R-id> [--test X] [--temp C] [--supply V] [--dut N]
+                                         Key findings and verdict, optionally for some conditions
+      query <R-id> [same filters] [--failed]
+                                         Print matching measurements as CSV
+      report <R-id>                      Write report.html for a run
 
-      mcp [--allow-writes]             Run as an MCP server on stdio for coding agents
-                                       (read-only unless --allow-writes)
+      mcp [--allow-writes] [--allow-runs]
+                                         Become an MCP server on stdin/stdout for coding agents.
+                                         Read-only unless allowed to write files and/or run the bench.
     """);
-
-static void PrintOrders(IEnumerable<WorkOrder> orders)
-{
-    Console.WriteLine($"{"ID",-8} {"STATUS",-11} {"PRIORITY",-8} {"DUE",-10}  {"CUSTOMER",-17} TITLE");
-    foreach (var o in orders)
-        Console.WriteLine($"{o.Id,-8} {o.Status,-11} {o.Priority,-8} {o.DueDate:yyyy-MM-dd}  {o.Customer,-17} {o.Title}");
-}
-
-static void PrintParts(IEnumerable<Part> parts)
-{
-    Console.WriteLine($"{"SKU",-8} {"ON HAND",7} {"REORDER",7}  NAME");
-    foreach (var p in parts)
-        Console.WriteLine($"{p.Sku,-8} {p.OnHand,7} {p.ReorderLevel,7}  {p.Name}{(p.IsLow ? "  [LOW]" : "")}");
-}
-
-static int Import(WorkshopService service, string path)
-{
-    var failures = 0;
-    foreach (var (line, number) in File.ReadLines(path).Select((l, i) => (l, i + 1)).Skip(1))
-    {
-        var f = line.Split(',');
-        try
-        {
-            var order = service.CreateOrder(f[0], f[1], DateOnly.ParseExact(f[2], "yyyy-MM-dd", CultureInfo.InvariantCulture),
-                f.Length > 3 ? Enum.Parse<Priority>(f[3], ignoreCase: true) : Priority.Normal);
-            Console.WriteLine($"line {number}: created {order.Id}");
-        }
-        catch (Exception ex) when (ex is DomainException or FormatException or IndexOutOfRangeException or ArgumentException)
-        {
-            Console.Error.WriteLine($"line {number}: {ex.Message}");
-            failures++;
-        }
-    }
-    return failures == 0 ? 0 : 1;
-}
-
-static void WriteReport(WorkshopService service, string path)
-{
-    using var writer = new StreamWriter(path);
-    writer.WriteLine("id,title,customer,status,priority,due");
-    foreach (var o in service.ListOrders())
-        writer.WriteLine($"{o.Id},\"{o.Title}\",\"{o.Customer}\",{o.Status},{o.Priority},{o.DueDate:yyyy-MM-dd}");
-}
 
 static string? TakeOption(List<string> args, string name)
 {

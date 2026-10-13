@@ -37,12 +37,15 @@ public sealed partial class ApprovalItem : ChatItem
 {
     private readonly TaskCompletionSource<bool> _decision = new();
 
-    public ApprovalItem(string title, string details)
+    public ApprovalItem(string heading, string title, string details)
     {
+        Heading = heading;
         Title = title;
         Details = details;
     }
 
+    /// <summary>What kind of action this is, e.g. "The assistant wants to use the test bench".</summary>
+    public string Heading { get; }
     public string Title { get; }
     public string Details { get; }
 

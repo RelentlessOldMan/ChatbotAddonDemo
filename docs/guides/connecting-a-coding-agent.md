@@ -1,55 +1,49 @@
 # Connecting a coding agent (MCP)
 
-*For users of Claude Code, Codex, Cursor and other MCP-capable agents.*
+*For engineers who use Claude Code, Codex, Cursor or another MCP-capable agent.*
 
-Both tools expose the same set of operations ("capabilities") over the [Model Context Protocol](https://modelcontextprotocol.io). Your agent uses its own model subscription, so **no API key is configured in our apps**.
+Your agent connects to the **console tool**, `demo-cli.exe`. It starts the tool itself in MCP mode (`demo-cli mcp`) and talks to it over stdin/stdout, the standard way local MCP servers work.
 
-| | Desktop app (`Demo.Desktop`) | Console tool (`demo-cli`) |
-|---|---|---|
-| Transport | Streamable HTTP on `127.0.0.1` | stdio (the agent launches it) |
-| When to use | Work alongside a person using the app; see their current selection | Headless and scripted work, no UI needed |
-| Auth | Bearer token | None (runs as you) |
-| Writes | Off unless "Allow agents to make changes" is ticked | Off unless `--allow-writes` |
-| Extra tools | `get_current_view` (what the user is looking at) | none |
+- **No API key goes into our tool, and it never calls a model.** 💲 All the tokens are spent by your agent, talking to its own model on your agent subscription, before and after each tool call. The traffic between your agent and `demo-cli` is free local I/O.
+- Our tools return compact summaries (verdicts and findings, not raw CSV), which keeps your agent's context, and your bill, small. The full data is still in the files if the agent wants it.
+- **Nothing has to be open.** The agent starts the tool when it needs it, and the tool exits when the session ends.
+- **No network port.** Nothing listens on your machine.
+- The desktop app doesn't need to be running. If it is, it shows the agent's new plans and runs live, because both apps use the same workspace folder.
 
-## Desktop app
-1. **Settings → Agent access (MCP)**, tick **Let coding agents connect to this app**, then **Save**. The status bar turns green.
-2. Click **Copy for Claude Code** or **Copy for Codex** and run or paste the result.
+## Choose what the agent may do
 
-Claude Code:
+| Flags | The agent can… |
+|---|---|
+| *(none)* | Read only: list specs, plans and runs; analyze results; query measurements |
+| `--allow-writes` | …also create test plans and HTML reports |
+| `--allow-runs` | …also start and stop runs on the bench |
+
+Start with no flags and add them as you get comfortable. Your agent will also ask your permission before calling tools that aren't read-only.
+
+## Claude Code
 ```powershell
-claude mcp add --transport http demo-desktop http://127.0.0.1:47821/mcp --header "Authorization: Bearer <token>"
+claude mcp add testbench -- "C:\Program Files\TestBench\demo-cli.exe" mcp --allow-writes --allow-runs
 ```
 
-Codex (keeps the token out of `config.toml`):
-```powershell
-setx DEMO_DESKTOP_MCP_TOKEN <token>
-```
+## Codex
 ```toml
 # %USERPROFILE%\.codex\config.toml
-[mcp_servers.demo_desktop]
-url = "http://127.0.0.1:47821/mcp"
-bearer_token_env_var = "DEMO_DESKTOP_MCP_TOKEN"
+[mcp_servers.testbench]
+command = 'C:\Program Files\TestBench\demo-cli.exe'
+args = ["mcp", "--allow-writes", "--allow-runs"]
 ```
 
-The app must be running for the agent to connect.
-
-![Agent access](../images/03-settings-agent-access.png)
-
-## Console tool
-Claude Code:
-```powershell
-claude mcp add demo-cli -- "C:\Program Files\Workshop\demo-cli.exe" mcp
-```
-Codex:
-```toml
-[mcp_servers.demo_cli]
-command = 'C:\Program Files\Workshop\demo-cli.exe'
-args = ["mcp"]
-```
-Add `--allow-writes` (Claude Code) or `"--allow-writes"` to `args` (Codex) to expose the tools that change data. Use `--data <file>` to point at a specific data file.
-
-![stdio session](../images/09-mcp-stdio-session.png)
+To use a specific workspace folder, add `"--workspace", "D:\\Lab\\workspace"` before `"mcp"` (or set `DEMO_WORKSPACE`).
 
 ## What the agent sees
-Every tool has a description written for models, a JSON schema, and annotations. `readOnlyHint: true` means it reads only. `destructiveHint: true` means it changes data, and well-behaved agents will ask you before calling it. Business-rule violations come back as readable results (e.g. `{"error": "WO-1005 is already completed."}`) so the agent can react.
+
+![MCP session](../images/11-mcp-session.png)
+
+- Every tool has a description written for models, a JSON schema, and annotations: `readOnlyHint: true` means it only reads, and `openWorldHint: true` means it drives the bench.
+- The server sends instructions on connect: the workflow (spec → plan → run → analysis) and rules such as "don't compute statistics yourself; use `get_run_summary`".
+- Rule violations come back as readable results the agent can act on, e.g. `{"error": "Temperature 200 °C is outside the bench range -55 to 150 °C."}`.
+- Results include **absolute file paths** (`results.csv`, `plots\IQ.png`, `report.html`), so an agent with file access can open them for its own analysis.
+- Runs take time: call `start_test_run`, then `wait_for_test_run` (up to 120 s per call), then `get_run_summary`. If the session ends mid-run, the run is marked *Interrupted*.
+
+## "Couldn't my agent just run demo-cli commands in a shell?"
+Yes, and that works too (`demo-cli run TP-1002`, `demo-cli summary R-1002`). MCP adds typed tools with descriptions, structured results instead of console text, and the same read / write / run permission tiers the chat assistant has. It also works in agents that have no shell.

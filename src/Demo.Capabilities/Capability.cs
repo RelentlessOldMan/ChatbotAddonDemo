@@ -2,14 +2,17 @@ using Microsoft.Extensions.AI;
 
 namespace Demo.Capabilities;
 
-/// <summary>How dangerous a capability is. Drives approval in chat and exposure/annotations in MCP.</summary>
+/// <summary>How much a capability can affect the world. Drives approval in chat and exposure/annotations in MCP.</summary>
 public enum SafetyClass
 {
-    /// <summary>Reads data only. Runs without asking.</summary>
+    /// <summary>Only reads. Runs without asking.</summary>
     Read,
 
-    /// <summary>Changes data. Needs a human's approval in chat; hidden from MCP unless writes are allowed.</summary>
+    /// <summary>Creates or changes files (plans, reports). Needs a human's approval in chat; hidden from agents unless allowed.</summary>
     Write,
+
+    /// <summary>Drives hardware (starts or stops a bench run). Needs approval in chat; hidden from agents unless allowed separately.</summary>
+    Execute,
 }
 
 /// <summary>
@@ -19,7 +22,7 @@ public enum SafetyClass
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class CapabilityAttribute(string name, SafetyClass safety) : Attribute
 {
-    /// <summary>snake_case tool name shown to models, e.g. <c>list_overdue_orders</c>.</summary>
+    /// <summary>snake_case tool name shown to models, e.g. <c>start_test_run</c>.</summary>
     public string Name { get; } = name;
 
     public SafetyClass Safety { get; } = safety;

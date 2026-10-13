@@ -1,26 +1,30 @@
-using System.Net;
-using System.Net.Sockets;
+using System.Diagnostics;
 using Demo.Ai;
-using Demo.Ai.Credentials;
 using Demo.Screenshots;
 using FlaUI.Core.AutomationElements;
-using ModelContextProtocol.Client;
 
 namespace Demo.Desktop.UiTests;
 
 /// <summary>
-/// Drives the real WPF app in --demo mode (scripted assistant, throwaway profile). The UI tests in
-/// this class run one at a time because each one owns a desktop window.
+/// Drives the real WPF app in --demo mode (scripted assistant, throwaway profile and workspace).
+/// The tests in this class run one at a time because each one owns a desktop window.
 /// </summary>
 [Collection("Desktop")]
 public sealed class DesktopAppTests : IDisposable
 {
+    // Must match FirstQuestion in the app (the scripted assistant ignores the wording, but screenshots show it).
+    private const string FirstQuestion =
+        "Make a hot/cold plan for the LDO-3300 from its datasheet: -40, 25, 85 and 125 °C at 3.6 V and 5 V, 3 units. Then run it and tell me what you find.";
+
+    private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(40);
     private readonly string _profile = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-uitests", Guid.NewGuid().ToString("N"));
+
+    private string Workspace => Path.Combine(_profile, "workspace");
 
     private DesktopDriver Launch(AiSettings settings)
     {
         new AiSettingsStore(Path.Combine(_profile, "settings.json")).Save(settings);
-        return DesktopDriver.Launch(DesktopExe, "--demo", "--profile", _profile);
+        return DesktopDriver.Launch(RepoFile(@"src\Demo.Desktop\bin\{0}\net10.0-windows\Demo.Desktop.exe"), "--demo", "--profile", _profile, "--workspace", Workspace);
     }
 
     [Fact]
@@ -30,7 +34,7 @@ public sealed class DesktopAppTests : IDisposable
 
         Assert.Null(d.Main.FindFirstDescendant(cf => cf.ByAutomationId("ChatPanel")));
         Assert.Null(d.Main.FindFirstDescendant(cf => cf.ByAutomationId("AssistantButton")));
-        Assert.Equal("Agent access: off", d.Find("McpStatus").Name);
+        Assert.Equal("Bench idle", d.Find("BenchStatus").Name);
     }
 
     [Fact]
@@ -48,75 +52,74 @@ public sealed class DesktopAppTests : IDisposable
     }
 
     [Fact]
-    public void Approved_change_is_applied_and_the_grid_updates()
+    public void The_legacy_UI_still_runs_plans_without_any_AI()
+    {
+        using var d = Launch(new AiSettings());
+
+        d.SelectRow("PlansGrid", "TP-1001");
+        d.Click("RunPlanButton");
+
+        d.WaitUntil(() => d.GridCell("RunsGrid", "R-1002", 2) == "Completed", "run to complete", RunTimeout);
+        d.WaitUntil(() => d.Find("RunVerdict").Name == "PASS", "verdict");
+    }
+
+    [Fact]
+    public void Approved_plan_and_run_execute_and_the_findings_appear()
     {
         using var d = Launch(new AiSettings { ChatEnabled = true });
 
-        AskFirstQuestion(d);
-        Assert.Equal("Normal", d.GridCell("OrdersGrid", "WO-1003", 4)); // nothing changes before approval
+        Ask(d, FirstQuestion);
+        d.Find("ApproveButton");
+        Assert.Single(d.Find("PlansGrid").AsDataGridView().Rows); // nothing is created before approval
         d.Click("ApproveButton");
 
-        d.WaitUntil(() => d.GridCell("OrdersGrid", "WO-1003", 4) == "High", "grid to show High");
-        d.WaitUntil(() => d.FindAll("AssistantMessage").Length == 2, "final answer");
+        d.WaitUntil(() => d.FindAll("ApproveButton").Length == 1 && d.FindAll("ApprovalCard").Length == 2, "the bench approval card");
+        Assert.Single(Directory.GetDirectories(Path.Combine(Workspace, "runs"))); // the bench isn't used before approval
+        d.Click("ApproveButton");
+
+        d.WaitUntil(() => d.FindAll("AssistantMessage").Any(m => m.AsTextBox().Text.Contains("Key findings")), "findings", RunTimeout);
+        Assert.Equal("Completed", d.GridCell("RunsGrid", "R-1002", 2));
+        d.WaitUntil(() => d.Find("RunVerdict").Name == "FAIL", "verdict");
         Assert.Contains("$", d.Find("UsageSummary").Name);
     }
 
     [Fact]
-    public void Denied_change_is_not_applied_and_the_assistant_acknowledges()
+    public void Denied_plan_is_not_created_and_the_assistant_acknowledges()
     {
         using var d = Launch(new AiSettings { ChatEnabled = true });
 
-        AskFirstQuestion(d);
+        Ask(d, FirstQuestion);
         d.Click("DenyButton");
 
-        d.WaitUntil(() => d.FindAll("AssistantMessage").Length == 2, "final answer");
-        Assert.Contains("left WO-1003 at Normal", d.FindAll("AssistantMessage")[1].AsTextBox().Text);
-        Assert.Equal("Normal", d.GridCell("OrdersGrid", "WO-1003", 4));
+        d.WaitUntil(() => d.FindAll("AssistantMessage").Any(m => m.AsTextBox().Text.Contains("didn't create the plan")), "acknowledgement");
+        Assert.Single(d.Find("PlansGrid").AsDataGridView().Rows);
+        Assert.Empty(Directory.GetFiles(Path.Combine(Workspace, "plans"), "TP-1002.xml"));
     }
 
     [Fact]
-    public async Task Agent_access_serves_live_app_state_and_shows_activity()
+    public void Changes_made_by_the_console_tool_show_up_in_the_open_app()
     {
-        var port = FreePort();
-        using var d = Launch(new AiSettings { McpEnabled = true, McpPort = port });
-        d.WaitUntil(() => d.Find("McpStatus").Name.Contains("on (read-only)"), "MCP server to start");
-        d.SelectRow("OrdersGrid", "WO-1006");
+        using var d = Launch(new AiSettings());
 
-        var token = new DpapiCredentialStore(Path.Combine(_profile, "credentials")).Get("mcp-bearer-token")!;
-        await using var client = await McpClient.CreateAsync(new HttpClientTransport(new HttpClientTransportOptions
-        {
-            Endpoint = new Uri($"http://127.0.0.1:{port}/mcp"),
-            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" },
-        }));
-        var result = await client.CallToolAsync("get_current_view");
+        var cli = Process.Start(new ProcessStartInfo(RepoFile(@"src\Demo.Cli\bin\{0}\net10.0\demo-cli.exe"),
+            $"--workspace \"{Workspace}\" plan from-spec LDO-3300_datasheet.csv --temps 25,125 --samples 2") { UseShellExecute = false, CreateNoWindow = true })!;
+        cli.WaitForExit();
 
-        Assert.Contains("WO-1006", string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(t => t.Text)));
-        d.WaitUntil(() => d.Find("McpActivity").Name.Contains("get_current_view"), "status bar activity");
+        d.WaitUntil(() => d.Find("PlansGrid").AsDataGridView().Rows.Any(r => r.Cells[0].Value == "TP-1002"), "the new plan to appear");
     }
 
-    private static void AskFirstQuestion(DesktopDriver d)
+    private static void Ask(DesktopDriver d, string question)
     {
-        d.Type("ChatInput", "Which work orders are overdue? Bump the Northwind sensor job to high priority.");
+        d.Type("ChatInput", question);
         d.Click("SendButton");
-        d.Find("ApproveButton");
     }
 
-    private static string DesktopExe
+    private static string RepoFile(string relativeFormat)
     {
-        get
-        {
-            var configuration = AppContext.BaseDirectory.Contains(@"\Release\") ? "Release" : "Debug";
-            var dir = new DirectoryInfo(AppContext.BaseDirectory);
-            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ChatbotAddonDemo.sln"))) dir = dir.Parent;
-            return Path.Combine(dir!.FullName, "src", "Demo.Desktop", "bin", configuration, "net10.0-windows", "Demo.Desktop.exe");
-        }
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
+        var configuration = AppContext.BaseDirectory.Contains(@"\Release\") ? "Release" : "Debug";
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ChatbotAddonDemo.sln"))) dir = dir.Parent;
+        return Path.Combine(dir!.FullName, string.Format(relativeFormat, configuration));
     }
 
     public void Dispose()

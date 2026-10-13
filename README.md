@@ -1,102 +1,185 @@
-# Chatbot add-on demo: adding AI to a legacy desktop tool
+# ChatbotAddonDemo 🔌
 
-A reference implementation showing how we **should** add AI to Windows desktop tools that run on customer machines, for two audiences:
+**A reference demo of how to add AI to a legacy Windows desktop tool: an opt-in chat assistant for everyday users, MCP access for people who use coding agents, and the customer paying for their own tokens.** The "legacy tool" is TestBench, a pretend test-bench application (WPF app + console tool). It turns spec sheets into XML test plans, runs them on a simulated bench, writes CSV and PNG results, and analyzes them for key findings.
 
-- **Customers who just want to ask it things:** an opt-in **chat assistant** inside the WPF app, using the customer's own Anthropic or OpenAI account.
-- **Customers who already use coding agents** (Claude Code, Codex, …): an **MCP server** in both the WPF app and the console tool, so their agent can drive our software.
+![The assistant built a plan from a datasheet, ran it on the bench, and reported the findings](docs/images/07-chat-findings.png)
 
-> The "legacy" domain (work orders + parts inventory) is a **placeholder**. Everything outside `src/Demo.Domain` and `src/Demo.Capabilities/Workshop` is domain-agnostic.
+## Why
 
-**Read next:** [Design & reasoning](docs/design.md) · [Decision records](docs/adr/) · [Security notes](docs/security.md) · Guides: [end users](docs/guides/using-the-assistant.md), [agent users](docs/guides/connecting-a-coding-agent.md), [IT admins](docs/guides/it-admin-deployment.md)
+Companies ship desktop tools that run on customer machines. Some of those customers would love to "just ask it"; others already use Claude Code or Codex and want their agent to drive the tool. This repo shows one sensible way to serve both, and **writes down why** each decision was made:
 
-## The idea in one picture
+- **Off by default**, and nothing leaves the PC until the user turns AI on and asks something.
+- **The customer pays**: their own API key (encrypted with Windows DPAPI), or better, their company's AI gateway. No vendor key ships in the binary.
+- **AI can only do what a person could do**, through the same validated code. Anything that creates files or uses the bench needs a person's approval.
+- **The app computes, the model explains.** The model never writes the XML or does the statistics.
+
+## How it works
+
+Two programs, four ways in. A and B existed before AI; C and D are what this demo adds.
 
 ```mermaid
 flowchart LR
-    UI[WPF UI] --> SVC
-    CHAT["Chat panel<br/>(customer's key)"] --> CAT
-    MCPW["MCP · HTTP<br/>(WPF, 127.0.0.1)"] --> CAT
-    MCPC["MCP · stdio<br/>(console)"] --> CAT
-    CLI[Console commands] --> SVC
-    CAT["Capability catalog<br/>defined once · Read/Write safety class"] --> SVC["Domain services<br/>(validation, persistence)"]
+    eng(["Test engineer"])
+    dev(["Engineer with<br/>a coding agent"])
+
+    subgraph desktop["Demo.Desktop.exe (WPF app)"]
+        ui["Screens"]
+        chat["Chat panel<br/>(opt-in)"]
+        dcap["Capability<br/>catalog"]
+        dlogic["Bench logic"]
+    end
+    subgraph cli["demo-cli.exe (console tool)"]
+        cmds["Commands"]
+        mcp["MCP server mode<br/>demo-cli mcp"]
+        ccap["Capability<br/>catalog"]
+        clogic["Bench logic"]
+    end
+
+    llm["💲 Claude / OpenAI API<br/>billed to the customer's key"]
+    agent["Claude Code / Codex"]
+    agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
+    ws[("Workspace folder<br/>specs · plans · runs")]
+
+    eng -- A --> ui --> dlogic
+    eng -- B --> cmds --> clogic
+    eng -- C --> chat
+    chat == "💲 HTTPS, tokens" ==> llm
+    chat -- "runs the tool the<br/>model asked for" --> dcap --> dlogic
+    dev -- D --> agent
+    agent == "💲 tokens" ==> agentllm
+    agent -- "starts it; MCP over stdin/stdout<br/>(no tokens on this hop)" --> mcp --> ccap --> clogic
+    dlogic <--> ws
+    clogic <--> ws
+
+    classDef paid fill:#fff1c2,stroke:#d97706,color:#000
+    class llm,agentllm paid
 ```
 
-Each operation is declared **once**, as a method with `[Capability("set_work_order_priority", SafetyClass.Write)]`. It becomes a chat tool and an MCP tool, and it always runs through the same business rules as the UI. Read operations run freely. Write operations need a human's approval in chat, and are hidden from agents unless the user allows changes.
+**💲 marks every place tokens are spent.** Thick arrows are model calls; everything else is ordinary local code and file access.
+
+| Path | In plain words | AI? | Who pays |
+|---|---|---|---|
+| **A** | An engineer clicks around the desktop app. Unchanged legacy behavior. | No | n/a |
+| **B** | An engineer or a script runs `demo-cli` commands. Unchanged legacy behavior. | No | n/a |
+| **C** | An engineer types in the chat panel. 💲 Our app sends the question and a list of tools to Claude/OpenAI; the model replies "call tool X"; our app asks the user if X creates files or uses the bench, runs it, and 💲 sends the result back, until the model answers in words. | Yes, **our app** calls the model | Customer's key or gateway |
+| **D** | An engineer asks Claude Code or Codex. 💲 The agent asks its own model what to do; when it decides to use a tool, it **starts `demo-cli mcp`** as a child process and calls the tool over MCP. Our code never talks to a model. | Yes, but **only in their agent** | Their own subscription |
+
+### Where tokens are spent
+
+| Activity | Calls a model? | Whose tokens |
+|---|---|---|
+| Using the screens or `demo-cli` commands (paths A, B) | **No** | none |
+| Running a plan, writing CSVs/plots, analyzing results, writing the report | **No.** The bench logic is ordinary code | none |
+| Each message in the chat panel (path C) | **Yes.** Several requests per message: one per model↔tool round trip, each resending the conversation so far | **The customer's** API key, or their company gateway |
+| A coding agent using `demo-cli mcp` (path D) | `demo-cli` never does. The *agent* calls its own model to decide which tool to use next | **The agent user's** own subscription |
+| `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model stands in | none |
+| `DEMO_LIVE_TESTS=1` | **Yes**, one small request per provider | Whoever's key is in the environment |
+
+The important points:
+
+- **Nothing in our apps "calls MCP".** MCP is a door *into* the console tool for coding agents.
+- **The model never touches files or the bench.** It can only *ask* for a tool; our code decides and runs it.
+- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. All four paths end in the same bench logic, so the same rules apply to everyone.
+- **MCP inside the desktop app is optional and not built.** The design explains when you'd want it and what it would take to secure.
+
+**Full explanation, with step-by-step sequence diagrams: [docs/design.md](docs/design.md).**
 
 ## Walkthrough
 
-All images below are generated by `scripts/capture-screenshots.ps1`, which drives the real apps (see [Screenshots](#screenshots)).
+These screenshots are generated by `scripts/capture-screenshots.ps1`, which drives the real apps. They are never taken by hand.
 
-**1. The legacy app, as customers know it.** With AI off (the default), nothing changes and nothing is sent anywhere.
+**1. The legacy tool, unchanged.** Test plans (XML), runs with findings and plots, and the customer's spec sheets. No AI anywhere until someone opts in.
 
-![Legacy app](docs/images/01-legacy-app.png)
+![Test plans](docs/images/01-test-plans.png)
+![Run results](docs/images/02-run-results.png)
+![Spec sheets](docs/images/03-spec-sheets.png)
 
-**2. Opting in.** Settings explains what gets sent and who pays, then lets the user pick a provider and enter a key. The key is encrypted with Windows DPAPI for that user, and IT can supply a gateway instead.
+**2. Opting in.** Settings explains what gets sent and who pays, then asks for a key (or uses the company gateway).
 
-![AI settings](docs/images/02-settings-ai-assistant.png)
+![Settings](docs/images/04-settings-ai-assistant.png)
 
-**3. Asking in plain English.** The assistant looked up overdue orders by itself (a read). Changing a priority is a write, so it **asks first**, and the grid still shows `Normal`. The footer shows token usage and estimated cost against a per-chat limit.
+**3. Asking in plain English.** "Make a hot/cold plan for the LDO-3300 from its datasheet … then run it." The assistant reads the spec sheets on its own, but **creating the plan file needs approval**:
 
-![Approval card](docs/images/04-chat-approval.png)
+![Plan approval](docs/images/05-chat-plan-approval.png)
 
-**4. After approval.** The change went through the same `WorkshopService` the UI uses, and the grid updated live.
+**4. Using the bench needs a second approval.** The new plan TP-1002 is already in the grid, validated and saved by the app, not written by the model.
 
-![Result](docs/images/05-chat-result.png)
+![Run approval](docs/images/06-chat-run-approval.png)
 
-**5. Agent access.** A separate opt-in. It is local-only, needs a token, and is read-only unless the user allows changes. One click copies a ready-made config for Claude Code or Codex.
+**5. Results.** The run executes on the (simulated) bench. The app computes the findings: one unit (DUT 3) fails quiescent current at 125 °C while the others pass, so it's a bad part rather than a design problem. The assistant explains them, and you can ask follow-ups about specific conditions:
 
-![Agent access settings](docs/images/03-settings-agent-access.png)
+![Follow-up](docs/images/08-chat-follow-up.png)
 
-**6. A coding agent connected.** It can see what the user has selected (`get_current_view`), which is why agents attach to the *running* app rather than spawning a copy. The status bar shows agent activity.
+The run's real output files: `results.csv`, `summary.csv`, `report.html`, and a plot per test:
 
-![Agent connected](docs/images/06-agent-connected.png)
-![MCP over HTTP](docs/images/07-mcp-http-session.png)
+![IQ plot](docs/images/09-output-plot-iq.png)
 
-**7. The console tool.** It is unchanged for scripts, and `demo-cli mcp` turns it into a stdio MCP server for agents.
+**6. The console tool**, used exactly as before with no AI involved:
 
-![Console tool](docs/images/08-console-tool.png)
-![MCP over stdio](docs/images/09-mcp-stdio-session.png)
+![Console tool](docs/images/10-console-tool.png)
 
-## Repository layout
+**7. A coding agent's view.** The agent starts `demo-cli mcp`, sees the tools (marked read, write or bench), and plans, runs and analyzes:
 
-| Path | What |
-|---|---|
-| `src/Demo.Domain` | Placeholder legacy logic (no AI knowledge) |
-| `src/Demo.Capabilities` | Capability catalog → `AIFunction`; `Workshop/` holds the domain-specific declarations |
-| `src/Demo.Ai` | `IChatClient` factory (Anthropic + OpenAI), credentials (DPAPI, env, IT gateway), `ChatSession` with approvals, usage/cost meter, scripted fake model |
-| `src/Demo.Mcp` | Catalog → MCP tools, exposure policy, stdio host, hardened loopback HTTP host, client config snippets |
-| `src/Demo.Desktop` | WPF app with chat panel, settings, MCP status, `--demo` mode |
-| `src/Demo.Cli` | Console tool (`demo-cli`), including `demo-cli mcp` |
-| `tests/*` | Unit, integration (real MCP clients), and FlaUI UI tests |
-| `tools/Demo.Screenshots` | Regenerates `docs/images` |
+![MCP session](docs/images/11-mcp-session.png)
 
-## Build, run, test
+## Usage
 
-Requires the .NET 10 SDK on Windows.
+Requires Windows and the .NET 10 SDK.
 
 ```powershell
 dotnet build ChatbotAddonDemo.sln
 
-# Run the desktop app in demo mode: seeded data, scripted assistant, no key needed
+# Desktop app in demo mode: fresh example workspace, scripted assistant, no key needed
 .\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe --demo
 
-# Run it for real (uses %LOCALAPPDATA%\ChatbotAddonDemo); enable AI in Settings
+# Desktop app for real (workspace in %LOCALAPPDATA%\ChatbotAddonDemo); turn on AI in Settings
 .\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe
 
 # Console tool
-.\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe overdue
+.\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe help
 
-# All tests: no network, no key, nothing billed. UI tests open the app briefly.
+# Tests. No network, no key, nothing billed. The UI tests open the app off-screen.
 dotnet test ChatbotAddonDemo.sln
 
-# Paid live-API smoke tests (both providers), only when you explicitly opt in
-$env:DEMO_LIVE_TESTS = '1'; dotnet test tests/Demo.Ai.Tests --filter Category=Live
-```
+# Paid live-API smoke tests (one call per provider), only when you explicitly opt in
+$env:DEMO_LIVE_TESTS = '1'; dotnet test --filter Category=Live
 
-## Screenshots
-
-```powershell
+# Regenerate every screenshot in docs/images
 .\scripts\capture-screenshots.ps1
 ```
 
-This builds the solution and launches `Demo.Desktop --demo`, which uses a throwaway profile and a scripted assistant whose tools still really execute. It clicks through the walkthrough using UI Automation and makes real MCP calls to both apps. The app renders its own windows to PNG over a demo-only named pipe, so capture works with a locked screen or on a build agent, and the output is the same on every machine. No key or network is needed. Rerun it after any UI change and commit `docs/images`.
+Connect a coding agent: [docs/guides/connecting-a-coding-agent.md](docs/guides/connecting-a-coding-agent.md).
+
+## Docs
+
+| Document | For |
+|---|---|
+| [Design](docs/design.md) | Everyone: who calls what, why each piece exists, diagrams |
+| [Decision records](docs/adr/) | Why each major choice was made, and what we rejected |
+| [Security notes](docs/security.md) | Threats and mitigations |
+| [Using the assistant](docs/guides/using-the-assistant.md) | End users |
+| [Connecting a coding agent](docs/guides/connecting-a-coding-agent.md) | Claude Code / Codex users |
+| [IT admin deployment](docs/guides/it-admin-deployment.md) | Rolling out keys or an AI gateway |
+
+## Layout
+
+```
+src/
+  Demo.Domain/         Bench logic: plans (XML + XSD), spec import, simulated bench, result files, plots, analysis. No AI.
+  Demo.Capabilities/   The capability catalog: what AI may do (Read / Write / Execute), defined once.
+  Demo.Ai/             Calling Claude/OpenAI (IChatClient), chat loop with approvals, credentials, cost meter.
+  Demo.Desktop/        WPF app: the legacy screens + the opt-in chat panel.
+  Demo.Cli/            Console tool: the legacy commands + `demo-cli mcp` for coding agents.
+tests/                 Domain, capabilities, AI (scripted model), CLI/MCP end-to-end, desktop UI tests.
+tools/Demo.Screenshots Drives the apps and renders docs/images.
+docs/                  Design, decision records, security, guides, images.
+scripts/               capture-screenshots.ps1
+```
+
+## Contributing
+
+This is a personal tool, published as-is — **issues and pull requests aren't accepted** (PRs auto-close). Fork it and make it your own. 🔌
+
+## License
+
+MIT — see [LICENSE](LICENSE). © 2026 RelentlessOldMan.

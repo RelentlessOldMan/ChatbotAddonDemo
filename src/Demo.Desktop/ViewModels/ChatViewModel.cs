@@ -109,14 +109,17 @@ public sealed partial class ChatViewModel : ObservableObject
     {
         var meter = new UsageMeter(Model, _settings.SessionSpendCapUsd);
         meter.Changed += (_, _) => UsageSummary = meter.Summary + " (estimate)";
-        var session = new ChatSession(_services.CreateChatClient(_settings), _services.Catalog, meter);
+        var session = new ChatSession(_services.CreateChatClient(_settings), _services.Catalog, meter, _services.ChatOptions);
         session.MessageAdded += Render;
         return session;
     }
 
     private async Task<bool> ApproveAsync(ApprovalRequest request, CancellationToken cancellationToken)
     {
-        var item = new ApprovalItem(request.Capability.Title, FormatArguments(request.Arguments));
+        var heading = request.Capability.Safety == SafetyClass.Execute
+            ? "The assistant wants to use the test bench"
+            : "The assistant wants to create a file";
+        var item = new ApprovalItem(heading, request.Capability.Title, FormatArguments(request.Arguments));
         _itemsByCallId[request.CallId] = item;
         Items.Add(item);
         Activity = "Waiting for your approval…";
@@ -162,6 +165,12 @@ public sealed partial class ChatViewModel : ObservableObject
         }
     }
 
+    /// <summary>One line per argument; strings bare, everything else (numbers, lists) as compact JSON.</summary>
     private static string FormatArguments(IReadOnlyDictionary<string, object?> arguments) =>
-        string.Join("\n", arguments.Select(a => $"{a.Key}: {(a.Value is JsonElement e && e.ValueKind == JsonValueKind.String ? e.GetString() : a.Value)}"));
+        string.Join("\n", arguments.Select(a => $"{a.Key}: {a.Value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString(),
+            string s => s,
+            var v => JsonSerializer.Serialize(v, CapabilityCatalog.SerializerOptions),
+        }}"));
 }

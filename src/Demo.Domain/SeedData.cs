@@ -1,22 +1,35 @@
 namespace Demo.Domain;
 
+/// <summary>Example design files a new workspace starts with.</summary>
 public static class SeedData
 {
-    /// <summary>Deterministic demo data, with due dates relative to <paramref name="today"/>.</summary>
-    public static DataSnapshot Create(DateOnly today) => new(
-        [
-            new("WO-1001", "Replace conveyor belt", "Northwind Foods", OrderStatus.InProgress, Priority.High, today.AddDays(-3)),
-            new("WO-1002", "Annual boiler inspection", "Contoso Plastics", OrderStatus.Open, Priority.Normal, today.AddDays(5)),
-            new("WO-1003", "Recalibrate filling line sensors", "Northwind Foods", OrderStatus.Open, Priority.Normal, today.AddDays(-1)),
-            new("WO-1004", "Install backup compressor", "Fabrikam Metals", OrderStatus.Open, Priority.Low, today.AddDays(14)),
-            new("WO-1005", "Fix loading dock door", "Contoso Plastics", OrderStatus.Completed, Priority.Normal, today.AddDays(-10), "Replaced spring assembly."),
-            new("WO-1006", "Hydraulic press leak", "Fabrikam Metals", OrderStatus.InProgress, Priority.Urgent, today.AddDays(1)),
-        ],
-        [
-            new("BLT-200", "Conveyor belt 2m", 2, 3),
-            new("SNS-110", "Proximity sensor", 14, 5),
-            new("FLT-031", "Hydraulic filter", 1, 4),
-            new("VLV-450", "Pressure relief valve", 9, 2),
-            new("SPR-077", "Door torsion spring", 6, 2),
-        ]);
+    public const string DatasheetCsv =
+        """
+        # LDO-3300 3.3 V low-dropout regulator, datasheet rev A (electrical characteristics)
+        # device: LDO-3300
+        parameter,name,units,min,typ,max
+        VOUT,Output voltage,V,3.267,3.300,3.333
+        IQ,Quiescent current,µA,,45,60
+        DROPOUT,Dropout voltage,mV,,180,300
+        LOAD_REG,Load regulation,mV,,2,8
+        PSRR,Ripple rejection at 1 kHz,dB,55,65,
+
+        """;
+
+    /// <summary>Tighter targets for the next silicon revision, plus a parameter the bench can't measure.</summary>
+    public const string RevBTargetsJson =
+        """
+        {
+          "device": "LDO-3300",
+          "revision": "B (design targets)",
+          "parameters": [
+            { "parameter": "VOUT",    "name": "Output voltage",           "units": "V",  "min": 3.280, "typ": 3.300, "max": 3.320 },
+            { "parameter": "IQ",      "name": "Quiescent current",        "units": "µA", "typ": 40, "max": 55 },
+            { "parameter": "DROPOUT", "name": "Dropout voltage",          "units": "mV", "typ": 160, "max": 250 },
+            { "parameter": "PSRR",    "name": "Ripple rejection at 1 kHz", "units": "dB", "min": 58, "typ": 66 },
+            { "parameter": "NOISE",   "name": "Output noise (10 Hz-100 kHz)", "units": "µVrms", "typ": 30, "max": 45 }
+          ]
+        }
+
+        """;
 }

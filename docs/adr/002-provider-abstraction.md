@@ -11,7 +11,7 @@ Customers have existing relationships with different AI vendors. We need at leas
 3. **`Microsoft.Extensions.AI.IChatClient`**: the .NET standard abstraction. The official Anthropic (`AsIChatClient`) and OpenAI (`Microsoft.Extensions.AI.OpenAI`) SDKs both provide adapters, and M.E.AI supplies `FunctionInvokingChatClient` (the tool loop) and `ApprovalRequiredAIFunction` (human approval).
 
 ## Decision
-Option 3. `ChatClientFactory` builds an `IChatClient` from a `ProviderSettings` record (provider, model, credential, optional base URL). The rest of the app sees only `IChatClient`.
+Option 3. `ChatClientFactory` builds an `IChatClient` from the provider, the model name and the resolved credential (a key, or a gateway URL and token). The rest of the app sees only `IChatClient`.
 
 ## Consequences
 - Adding a provider is one `switch` arm.

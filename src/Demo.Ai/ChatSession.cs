@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 
 namespace Demo.Ai;
 
-/// <summary>A write the model wants to make, waiting for the user's decision.</summary>
+/// <summary>A change or bench action the model wants to make, waiting for the user's decision.</summary>
 public sealed record ApprovalRequest(string CallId, Capability Capability, IReadOnlyDictionary<string, object?> Arguments)
 {
     public string ArgumentsJson => JsonSerializer.Serialize(Arguments, CapabilityCatalog.SerializerOptions);
@@ -14,17 +14,19 @@ public delegate Task<bool> ApprovalHandler(ApprovalRequest request, Cancellation
 
 public sealed record ChatSessionOptions
 {
-    public const string DefaultSystemPrompt =
+    /// <summary>Generic rules for any tool the assistant is embedded in; the host app adds its domain instructions.</summary>
+    public const string BasePrompt =
         """
-        You are the built-in assistant for a desktop work-order and inventory tool used by maintenance teams.
-        Answer using the tools provided; never invent work orders, parts, quantities or dates.
-        Tools that change data ask the user for approval before they run. If the user declines, accept it and suggest alternatives.
-        If a tool returns an "error", explain it plainly to the user.
-        Keep answers short and practical. Refer to work orders and parts by their ids.
+        You are the assistant built into a desktop application. Answer using the tools provided.
+        Tools that change data or start equipment ask the user for approval before they run. If the user declines, accept it and suggest alternatives.
+        Keep answers short and practical. Refer to things by their ids.
         The chat panel displays plain text, so do not use Markdown formatting.
         """;
 
-    public string SystemPrompt { get; init; } = DefaultSystemPrompt;
+    /// <summary>Base rules plus the host application's domain instructions.</summary>
+    public static ChatSessionOptions For(string domainInstructions) => new() { SystemPrompt = BasePrompt + "\n" + domainInstructions };
+
+    public string SystemPrompt { get; init; } = BasePrompt;
 
     /// <summary>Upper bound on model↔tool round-trips per user message, so a confused model can't loop on the customer's bill.</summary>
     public int MaxToolIterations { get; init; } = 8;
@@ -37,8 +39,8 @@ public sealed record ChatTurn(IReadOnlyList<ChatMessage> Messages)
 }
 
 /// <summary>
-/// Provider-neutral conversation with tool calling and human approval for
-/// <see cref="SafetyClass.Write"/> capabilities. Not thread-safe: one message at a time.
+/// Provider-neutral conversation with tool calling and human approval for every capability
+/// that is not <see cref="SafetyClass.Read"/>. Not thread-safe: one message at a time.
 /// </summary>
 public sealed class ChatSession
 {
@@ -63,7 +65,7 @@ public sealed class ChatSession
         _chatOptions = new ChatOptions
         {
             Tools = catalog.Capabilities
-                .Select(c => c.Safety == SafetyClass.Write ? new ApprovalRequiredAIFunction(c.Function) : (AITool)c.Function)
+                .Select(c => c.Safety == SafetyClass.Read ? c.Function : (AITool)new ApprovalRequiredAIFunction(c.Function))
                 .ToList(),
         };
         _history = [new ChatMessage(ChatRole.System, options.SystemPrompt)];

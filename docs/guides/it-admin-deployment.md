@@ -19,14 +19,14 @@ Precedence when the app chooses credentials: **gateway → environment variable 
 For scripted or VDI rollouts, set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for the user. Treat these as secrets: anything running as that user can read them.
 
 ## Turning features off
-- The assistant and agent access are both **off by default** and per-user.
+- The assistant is **off by default** and per-user.
 - To keep the assistant from working at all, set `DisableUserKeys=1` and configure no gateway. The panel then shows "Connect an AI provider" and makes no network calls.
+- Coding agents only reach TestBench if a user configures their agent to start `demo-cli mcp`. It is read-only unless `--allow-writes` and/or `--allow-runs` are added. To block agents entirely, don't deploy `demo-cli.exe` to those machines (or block it with AppLocker / WDAC).
 
 ## Network
 | Feature | Outbound | Inbound |
 |---|---|---|
-| Assistant | HTTPS to the provider or your gateway | none |
-| Agent access (desktop) | none | TCP on `127.0.0.1` only (default port 47821) |
-| Agent access (console) | none | none (stdio) |
+| Assistant (desktop app) | HTTPS to the provider or your gateway | none |
+| Coding agents (`demo-cli mcp`) | none (the agent's own traffic is the agent's business) | none: stdin/stdout only, no port |
 
 See also [security notes](../security.md).

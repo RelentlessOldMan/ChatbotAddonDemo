@@ -1,7 +1,7 @@
 using Demo.Ai;
 using Demo.Ai.Credentials;
 using Demo.Capabilities;
-using Demo.Capabilities.Workshop;
+using Demo.Capabilities.TestBench;
 using Demo.Domain;
 
 namespace Demo.Ai.Tests;
@@ -24,14 +24,15 @@ public class LiveProviderTests
         var key = Environment.GetEnvironmentVariable(info.ApiKeyEnvironmentVariable);
         Assert.SkipWhen(string.IsNullOrEmpty(key), $"{info.ApiKeyEnvironmentVariable} not set");
 
-        var service = new WorkshopService(new InMemoryDataStore(SeedData.Create(DateOnly.FromDateTime(DateTime.Today))));
+        var bench = new TestBenchService(Path.Combine(Path.GetTempPath(), "live-tests", Guid.NewGuid().ToString("N")), BenchOptions.Instant);
         using var client = ChatClientFactory.Create(provider, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
-        var session = new ChatSession(client, CapabilityCatalog.FromObject(new WorkshopCapabilities(service)), new UsageMeter(info.DefaultModel, 0.50m));
+        var session = new ChatSession(client, CapabilityCatalog.FromObject(new TestBenchCapabilities(bench)), new UsageMeter(info.DefaultModel, 0.50m),
+            ChatSessionOptions.For(TestBenchCapabilities.Instructions));
 
-        var turn = await session.SendAsync("Which parts are low on stock? Reply with just the SKUs.", (_, _) => Task.FromResult(false));
+        var turn = await session.SendAsync("Which spec sheets do we have? Reply with just the file names.", (_, _) => Task.FromResult(false));
 
-        Assert.Contains("FLT-031", turn.Text);
-        Assert.Contains("BLT-200", turn.Text);
+        Assert.Contains("LDO-3300_datasheet.csv", turn.Text);
+        Assert.Contains("LDO-3300_rev-B_targets.json", turn.Text);
         Assert.True(session.Meter.InputTokens > 0);
     }
 }

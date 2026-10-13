@@ -2,9 +2,29 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Demo.Desktop"
-        Title="{Binding Title}" Width="1400" Height="760" MinWidth="900" MinHeight="560"
+        xmlns:domain="clr-namespace:Demo.Domain;assembly=Demo.Domain"
+        Title="{Binding Title}" Width="1480" Height="820" MinWidth="1000" MinHeight="600"
         Background="{StaticResource Surface}" WindowStartupLocation="CenterScreen"
         AutomationProperties.AutomationId="MainWindow">
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type domain:Finding}">
+            <DockPanel Margin="0,0,0,8">
+                <Border DockPanel.Dock="Left" CornerRadius="3" Padding="6,1" Margin="0,1,8,0" VerticalAlignment="Top" MinWidth="58">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="#E5E7EB"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Severity}" Value="Fail"><Setter Property="Background" Value="#FDE2E2"/></DataTrigger>
+                                <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Background" Value="{StaticResource WarnSoft}"/></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding Severity}" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12"/>
+            </DockPanel>
+        </DataTemplate>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="52"/>
@@ -16,7 +36,7 @@
         <Border Background="{StaticResource Chrome}">
             <DockPanel Margin="16,0" LastChildFill="False">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="⚙" Foreground="#93C5FD" FontSize="20" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="⏚" Foreground="#93C5FD" FontSize="20" Margin="0,0,10,0" VerticalAlignment="Center"/>
                     <TextBlock Text="{Binding Title}" Foreground="White" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -29,7 +49,7 @@
             </DockPanel>
         </Border>
 
-        <!-- Body: legacy UI on the left, assistant panel on the right -->
+        <!-- Body: the legacy UI on the left, the (opt-in) assistant on the right -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -37,102 +57,170 @@
             </Grid.ColumnDefinitions>
 
             <TabControl Margin="12" SelectedIndex="{Binding SelectedTabIndex}" Padding="0" BorderBrush="{StaticResource Border}">
-                <TabItem Header="  Work orders  " AutomationProperties.AutomationId="OrdersTab">
+
+                <!-- ============================== Test plans ============================== -->
+                <TabItem Header="  Test plans  " AutomationProperties.AutomationId="PlansTab">
                     <Grid Background="White">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="250"/>
+                            <ColumnDefinition Width="400"/>
                         </Grid.ColumnDefinitions>
-                        <DataGrid ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder}" BorderThickness="0"
-                                  AutomationProperties.AutomationId="OrdersGrid">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="70"/>
-                                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*" MinWidth="200"/>
-                                <DataGridTextColumn Header="Customer" Binding="{Binding Customer}" Width="125"/>
-                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80"/>
-                                <DataGridTextColumn Header="Priority" Binding="{Binding Priority}" Width="75"/>
-                                <DataGridTextColumn Header="Due" Binding="{Binding DueDate, StringFormat=yyyy-MM-dd}" Width="90"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <DockPanel>
+                            <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="10,8">
+                                <Button Style="{StaticResource PlainButton}" Content="Import plan XML…" HorizontalAlignment="Left" Command="{Binding ImportPlanCommand}"/>
+                            </Border>
+                            <DataGrid ItemsSource="{Binding Plans}" SelectedItem="{Binding SelectedPlan}" BorderThickness="0"
+                                      AutomationProperties.AutomationId="PlansGrid">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Plan" Binding="{Binding Id}" Width="70"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" MinWidth="180"/>
+                                    <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="80"/>
+                                    <DataGridTextColumn Header="Units" Binding="{Binding Samples}" Width="50"/>
+                                    <DataGridTextColumn Header="Measurements" Binding="{Binding MeasurementCount}" Width="95"/>
+                                    <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="170"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
                         <Border Grid.Column="1" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="16">
-                            <StackPanel>
-                                <TextBlock Text="SELECTED ORDER" Style="{StaticResource SectionLabel}" Margin="0,0,0,4"/>
-                                <TextBlock Text="{Binding SelectedOrder.Id, FallbackValue='—'}" FontSize="18" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding SelectedOrder.Title}" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                                <TextBlock Text="{Binding SelectedOrder.CompletionNote}" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
-
-                                <TextBlock Text="PRIORITY" Style="{StaticResource SectionLabel}"/>
-                                <DockPanel>
-                                    <Button DockPanel.Dock="Right" Style="{StaticResource PlainButton}" Content="Apply" Margin="6,0,0,0"
-                                            Command="{Binding SetPriorityCommand}"/>
-                                    <ComboBox ItemsSource="{Binding Priorities}" SelectedItem="{Binding EditPriority}"/>
-                                </DockPanel>
-
-                                <TextBlock Text="COMPLETE WITH NOTE" Style="{StaticResource SectionLabel}"/>
-                                <TextBox Text="{Binding CompletionNote, UpdateSourceTrigger=PropertyChanged}" Height="54" TextWrapping="Wrap" AcceptsReturn="True"/>
-                                <Button Style="{StaticResource PlainButton}" Content="Mark completed" Margin="0,6,0,0" HorizontalAlignment="Left"
-                                        Command="{Binding CompleteOrderCommand}"/>
-                            </StackPanel>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top">
+                                    <TextBlock Text="SELECTED PLAN" Style="{StaticResource SectionLabel}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{Binding SelectedPlan.Id, FallbackValue='—'}" FontSize="18" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding SelectedPlan.Name}" TextWrapping="Wrap"/>
+                                    <TextBlock Text="CONDITIONS" Style="{StaticResource SectionLabel}"/>
+                                    <TextBlock Text="{Binding PlanConditions}" TextWrapping="Wrap" FontSize="12"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Style="{StaticResource PrimaryButton}" Content="▶  Run on bench" Command="{Binding RunPlanCommand}"
+                                                AutomationProperties.AutomationId="RunPlanButton"/>
+                                        <TextBlock Text="{Binding PlanEstimate}" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" Width="230"/>
+                                    </StackPanel>
+                                    <TextBlock Text="PLAN FILE (XML)" Style="{StaticResource SectionLabel}" Margin="0,16,0,4"/>
+                                </StackPanel>
+                                <TextBox Text="{Binding PlanXml, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="11"
+                                         HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" Background="#F8F9FB"
+                                         AutomationProperties.AutomationId="PlanXml"/>
+                            </DockPanel>
                         </Border>
                     </Grid>
                 </TabItem>
-                <TabItem Header="  Parts  " AutomationProperties.AutomationId="PartsTab">
+
+                <!-- ================================= Runs ================================= -->
+                <TabItem Header="  Runs  " AutomationProperties.AutomationId="RunsTab">
                     <Grid Background="White">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="250"/>
+                            <ColumnDefinition Width="560"/>
                         </Grid.ColumnDefinitions>
-                        <DataGrid ItemsSource="{Binding Parts}" SelectedItem="{Binding SelectedPart}" BorderThickness="0"
-                                  AutomationProperties.AutomationId="PartsGrid">
+                        <DataGrid ItemsSource="{Binding Runs}" SelectedItem="{Binding SelectedRun}" BorderThickness="0"
+                                  AutomationProperties.AutomationId="RunsGrid">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="90"/>
-                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
-                                <DataGridTextColumn Header="On hand" Binding="{Binding OnHand}" Width="80"/>
-                                <DataGridTextColumn Header="Reorder at" Binding="{Binding ReorderLevel}" Width="80"/>
-                                <DataGridCheckBoxColumn Header="Low" Binding="{Binding IsLow, Mode=OneWay}" Width="50"/>
+                                <DataGridTextColumn Header="Run" Binding="{Binding Id}" Width="62"/>
+                                <DataGridTextColumn Header="Plan" Binding="{Binding PlanId}" Width="66"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="82"/>
+                                <DataGridTemplateColumn Header="Progress" Width="*" MinWidth="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ProgressBar Value="{Binding PercentComplete, Mode=OneWay}" Maximum="100" Height="8" Margin="4,0" VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Failed" Binding="{Binding Failed}" Width="52"/>
+                                <DataGridTextColumn Header="Started" Binding="{Binding Started, StringFormat=MM-dd HH:mm}" Width="82"/>
                             </DataGrid.Columns>
                         </DataGrid>
-                        <Border Grid.Column="1" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="16">
-                            <StackPanel>
-                                <TextBlock Text="ADJUST STOCK" Style="{StaticResource SectionLabel}" Margin="0,0,0,4"/>
-                                <TextBlock Text="{Binding SelectedPart.Name, FallbackValue='Select a part'}" FontWeight="SemiBold"/>
-                                <TextBlock Text="QUANTITY (+/−)" Style="{StaticResource SectionLabel}"/>
-                                <TextBox Text="{Binding StockDelta}"/>
-                                <TextBlock Text="REASON" Style="{StaticResource SectionLabel}"/>
-                                <TextBox Text="{Binding StockReason, UpdateSourceTrigger=PropertyChanged}"/>
-                                <Button Style="{StaticResource PlainButton}" Content="Adjust" Margin="0,8,0,0" HorizontalAlignment="Left"
-                                        Command="{Binding AdjustStockCommand}"/>
-                            </StackPanel>
+                        <Border Grid.Column="1" BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0" Padding="16,12">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="10,2" VerticalAlignment="Top"
+                                                Visibility="{Binding RunVerdict, Converter={StaticResource NonEmptyToVis}}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{StaticResource Good}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RunVerdict}" Value="FAIL"><Setter Property="Background" Value="{StaticResource Bad}"/></DataTrigger>
+                                                        <DataTrigger Binding="{Binding RunVerdict}" Value="PASS WITH WARNINGS"><Setter Property="Background" Value="{StaticResource Warn}"/></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding RunVerdict}" Foreground="White" FontWeight="SemiBold" FontSize="11.5"
+                                                       AutomationProperties.AutomationId="RunVerdict"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding RunHeadline}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                    </DockPanel>
+                                    <WrapPanel Margin="0,10,0,0">
+                                        <Button Style="{StaticResource PlainButton}" Content="Write report" Margin="0,0,8,0" Command="{Binding WriteReportCommand}"/>
+                                        <Button Style="{StaticResource PlainButton}" Content="Open folder" Margin="0,0,8,0" Command="{Binding OpenRunFolderCommand}"/>
+                                        <Button Style="{StaticResource PlainButton}" Content="Cancel run" Command="{Binding CancelRunCommand}"/>
+                                    </WrapPanel>
+
+                                    <TextBlock Text="KEY FINDINGS" Style="{StaticResource SectionLabel}" Margin="0,14,0,6"/>
+                                    <ItemsControl ItemsSource="{Binding Findings}" AutomationProperties.AutomationId="FindingsList"/>
+
+                                    <DockPanel Margin="0,8,0,4">
+                                        <TextBlock Text="PLOT" Style="{StaticResource SectionLabel}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                        <ComboBox ItemsSource="{Binding PlotNames}" SelectedItem="{Binding SelectedPlotName}" Width="140" HorizontalAlignment="Left"
+                                                  AutomationProperties.AutomationId="PlotPicker"/>
+                                    </DockPanel>
+                                    <Image Source="{Binding PlotImage}" Stretch="Uniform" MaxHeight="300" HorizontalAlignment="Left"
+                                           AutomationProperties.AutomationId="PlotImage"/>
+                                </StackPanel>
+                            </ScrollViewer>
                         </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- ============================== Spec sheets ============================= -->
+                <TabItem Header="  Spec sheets  " AutomationProperties.AutomationId="SpecsTab">
+                    <Grid Background="White">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="320"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <DataGrid ItemsSource="{Binding Specs}" SelectedItem="{Binding SelectedSpec}" BorderThickness="0"
+                                  AutomationProperties.AutomationId="SpecsGrid">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="*"/>
+                                <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <DataGrid Grid.Column="1" ItemsSource="{Binding SelectedSpec.Parameters}" BorderThickness="1,0,0,0">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Parameter" Binding="{Binding Parameter}" Width="90"/>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Units" Binding="{Binding Units}" Width="60"/>
+                                <DataGridTextColumn Header="Min" Binding="{Binding Min}" Width="70"/>
+                                <DataGridTextColumn Header="Typ" Binding="{Binding Typical}" Width="70"/>
+                                <DataGridTextColumn Header="Max" Binding="{Binding Max}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
                     </Grid>
                 </TabItem>
             </TabControl>
 
-            <local:ChatPanel Grid.Column="1" Width="390" DataContext="{Binding Chat}"
+            <local:ChatPanel Grid.Column="1" Width="400" DataContext="{Binding Chat}"
                              Visibility="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
         </Grid>
 
-        <!-- Status bar: always shows whether agents can reach this app -->
+        <!-- Status bar -->
         <Border Grid.Row="2" Background="#E9ECF0" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0" LastChildFill="False">
                 <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="11.5"
-                           Text="{Binding DataPath, StringFormat='Data: {0}'}"/>
+                           Text="{Binding Workspace, StringFormat='Workspace: {0}'}"/>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Mcp.LastActivity}" Foreground="{StaticResource Accent}" FontSize="11.5" Margin="0,0,14,0"
-                               AutomationProperties.AutomationId="McpActivity"/>
                     <Ellipse Width="8" Height="8" Margin="0,0,6,0">
                         <Ellipse.Style>
                             <Style TargetType="Ellipse">
                                 <Setter Property="Fill" Value="#9CA3AF"/>
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Mcp.IsRunning}" Value="True">
-                                        <Setter Property="Fill" Value="#16A34A"/>
+                                    <DataTrigger Binding="{Binding BenchBusy}" Value="True">
+                                        <Setter Property="Fill" Value="#F59E0B"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Ellipse.Style>
                     </Ellipse>
-                    <TextBlock Text="{Binding Mcp.Status}" FontSize="11.5" AutomationProperties.AutomationId="McpStatus"/>
+                    <TextBlock Text="{Binding BenchStatus}" FontSize="11.5" AutomationProperties.AutomationId="BenchStatus"/>
                 </StackPanel>
             </DockPanel>
         </Border>

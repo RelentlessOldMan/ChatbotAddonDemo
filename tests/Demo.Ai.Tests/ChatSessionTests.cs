@@ -1,19 +1,30 @@
 using Demo.Ai;
 using Demo.Capabilities;
-using Demo.Capabilities.Workshop;
+using Demo.Capabilities.TestBench;
 using Demo.Domain;
 using Microsoft.Extensions.AI;
 using static Demo.Ai.ScriptedChatClient;
 
 namespace Demo.Ai.Tests;
 
-public class ChatSessionTests
+public sealed class ChatSessionTests : IDisposable
 {
-    private readonly WorkshopService _service = new(new InMemoryDataStore(SeedData.Create(DateOnly.FromDateTime(DateTime.Today))));
+    private readonly string _workspace = Path.Combine(Path.GetTempPath(), "chat-tests", Guid.NewGuid().ToString("N"));
+    private readonly TestBenchService _bench;
     private readonly List<ApprovalRequest> _approvalsAsked = [];
 
+    public ChatSessionTests() => _bench = new TestBenchService(_workspace, BenchOptions.Instant);
+
     private ChatSession Session(ScriptedChatClient model, decimal? cap = null, string priced = "claude-opus-5-5") =>
-        new(model, CapabilityCatalog.FromObject(new WorkshopCapabilities(_service)), new UsageMeter(priced, cap));
+        new(model, CapabilityCatalog.FromObject(new TestBenchCapabilities(_bench)), new UsageMeter(priced, cap),
+            ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+
+    private static readonly Dictionary<string, object?> HotColdFromSpec = new()
+    {
+        ["specFile"] = "LDO-3300_datasheet.csv",
+        ["samples"] = 3,
+        ["temperaturesC"] = new[] { -40, 25, 85, 125 },
+    };
 
     private ApprovalHandler Answer(bool approve) => (request, _) =>
     {
@@ -24,32 +35,40 @@ public class ChatSessionTests
     [Fact]
     public async Task Read_tools_run_without_approval_and_results_reach_the_model()
     {
-        var model = new ScriptedChatClient([Call("list_overdue_orders"), Reply("WO-1001 and WO-1003 are overdue.")]);
+        var model = new ScriptedChatClient([Call("list_test_plans"), Reply("There is one plan, TP-1001.")]);
 
-        var turn = await Session(model).SendAsync("What's overdue?", Answer(true));
+        var turn = await Session(model).SendAsync("What plans are there?", Answer(true));
 
         Assert.Empty(_approvalsAsked);
-        Assert.Equal("WO-1001 and WO-1003 are overdue.", turn.Text);
+        Assert.Equal("There is one plan, TP-1001.", turn.Text);
         var toolResult = model.Requests[1].SelectMany(m => m.Contents).OfType<FunctionResultContent>().Single();
-        Assert.Contains("WO-1003", System.Text.Json.JsonSerializer.Serialize(toolResult.Result));
+        Assert.Contains("LDO-3300 room-temperature check", System.Text.Json.JsonSerializer.Serialize(toolResult.Result));
     }
 
     [Fact]
     public async Task Write_tools_ask_for_approval_and_run_when_approved()
     {
-        var model = new ScriptedChatClient(
-        [
-            Call("set_work_order_priority", new Dictionary<string, object?> { ["id"] = "WO-1003", ["priority"] = "High" }),
-            Reply("Done — WO-1003 is now High priority."),
-        ]);
+        var model = new ScriptedChatClient([Call("create_test_plan_from_spec", HotColdFromSpec), Reply("Saved as TP-1002.")]);
 
-        await Session(model).SendAsync("Bump WO-1003 to high", Answer(true));
+        await Session(model).SendAsync("Make a hot/cold plan from the datasheet", Answer(true));
 
         var asked = Assert.Single(_approvalsAsked);
-        Assert.Equal("set_work_order_priority", asked.Capability.Name);
-        Assert.Equal("Change work order priority", asked.Capability.Title);
-        Assert.Contains("\"WO-1003\"", asked.ArgumentsJson);
-        Assert.Equal(Priority.High, _service.GetOrder("WO-1003").Priority);
+        Assert.Equal("create_test_plan_from_spec", asked.Capability.Name);
+        Assert.Equal(SafetyClass.Write, asked.Capability.Safety);
+        Assert.Equal("Create a test plan from a spec sheet", asked.Capability.Title);
+        Assert.Contains("LDO-3300_datasheet.csv", asked.ArgumentsJson);
+        Assert.Equal(["TP-1001", "TP-1002"], _bench.ListPlans().Select(p => p.Id));
+    }
+
+    [Fact]
+    public async Task Bench_actions_ask_for_approval_too()
+    {
+        var model = new ScriptedChatClient([Call("start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }), Reply("Started.")]);
+
+        await Session(model).SendAsync("Run TP-1001", Answer(true));
+
+        Assert.Equal(SafetyClass.Execute, Assert.Single(_approvalsAsked).Capability.Safety);
+        Assert.Equal(2, _bench.ListRuns().Count);
     }
 
     [Fact]
@@ -57,14 +76,14 @@ public class ChatSessionTests
     {
         var model = new ScriptedChatClient(
         [
-            Call("adjust_stock", new Dictionary<string, object?> { ["sku"] = "FLT-031", ["delta"] = 10, ["reason"] = "PO" }),
-            Reply("OK, I won't change the stock."),
+            Call("start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }),
+            Reply("OK, I won't start it."),
         ]);
 
-        await Session(model).SendAsync("Receive 10 filters", Answer(false));
+        await Session(model).SendAsync("Run TP-1001", Answer(false));
 
         Assert.Single(_approvalsAsked);
-        Assert.Equal(1, _service.ListParts().Single(p => p.Sku == "FLT-031").OnHand);
+        Assert.Single(_bench.ListRuns()); // only the seeded run
         var result = model.Requests[1].SelectMany(m => m.Contents).OfType<FunctionResultContent>().Single();
         Assert.Contains("declined", result.Result?.ToString(), StringComparison.OrdinalIgnoreCase);
     }
@@ -72,7 +91,7 @@ public class ChatSessionTests
     [Fact]
     public async Task Usage_is_metered_across_tool_round_trips()
     {
-        var model = new ScriptedChatClient([Call("list_parts", inputTokens: 1000, outputTokens: 50), Reply("ok", inputTokens: 2000, outputTokens: 100)]);
+        var model = new ScriptedChatClient([Call("get_bench_info", inputTokens: 1000, outputTokens: 50), Reply("ok", inputTokens: 2000, outputTokens: 100)]);
         var session = Session(model);
 
         await session.SendAsync("parts?", Answer(true));
@@ -108,14 +127,14 @@ public class ChatSessionTests
     {
         var model = new ScriptedChatClient(
         [
-            Call("complete_work_order", new Dictionary<string, object?> { ["id"] = "WO-1005", ["note"] = "x" }),
-            Reply("It was already completed."),
+            Call("generate_report", new Dictionary<string, object?> { ["runId"] = "R-9999" }),
+            Reply("That run doesn't exist."),
         ]);
 
-        await Session(model).SendAsync("complete WO-1005", Answer(true));
+        await Session(model).SendAsync("report R-9999", Answer(true));
 
         var result = model.Requests[1].SelectMany(m => m.Contents).OfType<FunctionResultContent>().Single();
-        Assert.Contains("already completed", System.Text.Json.JsonSerializer.Serialize(result.Result));
+        Assert.Contains("does not exist", System.Text.Json.JsonSerializer.Serialize(result.Result));
     }
 
     [Fact]
@@ -129,6 +148,13 @@ public class ChatSessionTests
 
         var second = model.Requests[1];
         Assert.Equal(ChatRole.System, second[0].Role);
+        Assert.Contains("do not use Markdown", second[0].Text);      // generic rules from Demo.Ai
+        Assert.Contains("Call get_bench_info before", second[0].Text); // domain instructions from the host app
         Assert.Equal(["a", "one", "b"], second.Skip(1).Select(m => m.Text));
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_workspace, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }

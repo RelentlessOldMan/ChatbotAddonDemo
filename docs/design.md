@@ -1,138 +1,254 @@
 # Design: adding AI to a legacy desktop tool
 
-> Status: **draft v0.1** (2026-10-12). The sample domain is a placeholder until the real tool shape is described; everything outside `Demo.Domain` is domain-agnostic.
+This document explains how the demo is put together and why. If you only read one section, read [§3 Who calls what](#3-who-calls-what-the-runtime-picture).
+
+**Contents**
+
+1. [What we are demonstrating](#1-what-we-are-demonstrating)
+2. [The pretend legacy tool: TestBench](#2-the-pretend-legacy-tool-testbench)
+3. [Who calls what: the runtime picture](#3-who-calls-what-the-runtime-picture)
+4. [Why each piece exists](#4-why-each-piece-exists)
+5. [The capability layer: one list of what AI may do](#5-the-capability-layer-one-list-of-what-ai-may-do)
+6. [Path C in detail: the chat assistant](#6-path-c-in-detail-the-chat-assistant)
+7. [Path D in detail: coding agents over MCP](#7-path-d-in-detail-coding-agents-over-mcp)
+8. [Optional, not built: MCP inside the desktop app](#8-optional-not-built-mcp-inside-the-desktop-app)
+9. [The app does the work; the model orchestrates and explains](#9-the-app-does-the-work-the-model-orchestrates-and-explains)
+10. [Security in one table](#10-security-in-one-table)
+11. [Testing](#11-testing)
+12. [Screenshots are generated, not taken by hand](#12-screenshots-are-generated-not-taken-by-hand)
+13. [Build dependencies (compile time, not runtime)](#13-build-dependencies-compile-time-not-runtime)
+14. [Open items](#14-open-items)
+
+---
 
 ## 1. What we are demonstrating
 
-We ship Windows desktop tools (a WPF app and a console app) that run **on customer machines**. We want to show the *right* way to let customers use AI with them, for two kinds of customer:
+We ship Windows desktop tools that run **on customer machines**. We want to show the *right* way to let customers use AI with them, for two kinds of customer:
 
 | Persona | Who they are | What they want | What we give them |
 |---|---|---|---|
-| **"Just let me ask it"** | Operators, analysts; no idea what Claude/Codex/MCP are | Type a question in plain English, get an answer or have the tool do the thing | An **opt-in chat panel** inside the WPF app |
-| **"I have my own agent"** | Engineers, automation folks, already use Claude Code / Codex / Cursor | Drive our tool from their coding agent, script against it | An **MCP server** in both the WPF and console apps |
+| **"Just let me ask it"** | Test engineers and technicians. They don't know or care what Claude, Codex or MCP are. | Type "make a hot/cold plan from the datasheet and run it" and get it done, then ask questions about the results. | An **opt-in chat panel** in the desktop app. |
+| **"I have my own agent"** | Engineers who already use Claude Code, Codex or Cursor. | Have their agent drive our tool as part of bigger work, e.g. "run the rev-B targets over temperature and write up what fails". | An **MCP server mode** in the console tool: `demo-cli mcp`. |
 
-Constraints that shape everything:
+Four constraints shape every decision:
 
-1. **The customer pays for tokens.** We never ship a vendor key. The customer supplies credentials, and we must store them safely on their machine.
-2. **It runs on the customer's desktop**, not our cloud. No backend of ours is in the loop.
-3. **Off by default.** AI features must be explicitly enabled; a customer who never opts in sees no behavior change and no network traffic.
-4. **The AI can only do what the user could do**, through the same validated code paths, and writes need a human's OK.
+1. **The customer pays for AI.** We never ship a vendor API key. The chat panel uses the customer's own key or their company's AI gateway; coding agents use their own subscription.
+2. **It runs on the customer's PC.** There is no backend of ours in the loop.
+3. **Off by default.** A customer who never opts in sees no change and no network traffic.
+4. **AI can only do what a person could do**, through the same validated code, and anything that creates files or uses the bench needs a person's OK.
 
-## 2. The core idea: one capability catalog, three front ends
+## 2. The pretend legacy tool: TestBench
 
-The naïve approach is "bolt a chatbot onto the UI" — let the model click buttons or scrape screens. That's brittle, untestable, and impossible to expose to external agents. Instead we pull the tool's operations into a **capability layer** and put three front ends on it.
-
-```mermaid
-flowchart TB
-    subgraph Fronts["Front ends"]
-        UI["WPF UI<br/>(humans click)"]
-        CHAT["In-app chat panel<br/>(Claude / OpenAI via customer's key)"]
-        MCPW["MCP server in WPF<br/>(Streamable HTTP, 127.0.0.1)"]
-        CLI["Console commands<br/>(scripts / batch)"]
-        MCPC["MCP server in console<br/>(stdio)"]
-    end
-    subgraph Cap["Demo.Capabilities — the catalog"]
-        CAT["Capability catalog<br/>name · description · JSON schema · Read/Write flag"]
-    end
-    subgraph Dom["Demo.Domain — the legacy logic"]
-        SVC["Services + validation + persistence"]
-    end
-    UI --> SVC
-    CLI --> SVC
-    CHAT --> CAT
-    MCPW --> CAT
-    MCPC --> CAT
-    CAT --> SVC
-```
-
-Each capability is defined **once**: a name, a model-facing description, typed parameters (→ JSON schema), and a **safety class** (`Read` or `Write`). From that single definition we derive:
-
-- a `Microsoft.Extensions.AI` **`AIFunction`** for the in-app chatbot (works with any `IChatClient` — Anthropic or OpenAI),
-- an **MCP tool** (`McpServerTool.Create(aiFunction)`) with `readOnlyHint`/`destructiveHint` annotations,
-- the test surface: one test suite proves the capability; the front ends are thin adapters.
-
-**Why this matters for the demo audience:** adding a new capability lights it up in the chat panel *and* for external agents with zero extra work, and the AI never bypasses the business rules the UI uses.
-
-See [ADR-001](adr/001-capability-layer.md).
-
-## 3. Component map
+The two apps simulate a typical engineering test tool. It controls a test bench (a temperature chamber, a power supply, and meters) that measures voltage-regulator chips. The bench is simulated, but the workflow is the real one:
 
 ```mermaid
 flowchart LR
-    subgraph Libraries
-        D[Demo.Domain<br/>placeholder legacy logic]
-        C[Demo.Capabilities<br/>catalog + AIFunction adapter]
-        A[Demo.Ai<br/>providers · credentials · chat session · cost]
-        M[Demo.Mcp<br/>MCP hosting + policy]
-    end
-    subgraph Apps
-        W[Demo.Desktop<br/>WPF]
-        K[Demo.Cli<br/>console]
-    end
-    C --> D
-    A --> C
-    M --> C
-    W --> A
-    W --> M
-    K --> M
-    K --> C
+    spec["① Spec sheet<br/>(CSV / JSON design file)<br/>limits for each parameter"]
+    plan["② Test plan<br/>(XML file)<br/>conditions to sweep, units, tests + limits"]
+    run["③ Run on the bench<br/>chamber soaks at each temperature,<br/>every unit is measured"]
+    files["④ Result files<br/>results.csv · summary.csv<br/>plots/*.png · report.html"]
+    analysis["⑤ Analysis<br/>verdict + key findings:<br/>failures, near-limit results, drift"]
+    spec --> plan --> run --> files --> analysis
 ```
 
-| Project | Responsibility | Notable dependencies |
+All state is **plain files in a workspace folder**, which is how real tools of this kind tend to work:
+
+```
+workspace\
+  specs\   LDO-3300_datasheet.csv, LDO-3300_rev-B_targets.json   ← the customer's design files
+  plans\   TP-1001.xml, TP-1002.xml, TestPlan.xsd                ← test plans
+  runs\    R-1001\ run.json, results.csv, summary.csv, plots\*.png, report.html
+```
+
+Both apps open the same workspace (by default `%LOCALAPPDATA%\ChatbotAddonDemo\workspace`). The desktop app watches the folder, so a plan created by the console tool, or by a coding agent through it, appears in the open window within a second.
+
+The simulated bench produces realistic data: temperature drift, unit-to-unit spread, noise, and one weak unit (DUT 3) whose current draw runs away above 85 °C. That gives the analysis, and the AI, something real to find.
+
+## 3. Who calls what: the runtime picture
+
+There are **two programs** (`Demo.Desktop.exe` and `demo-cli.exe`) and **four ways in**: two that existed before AI (A and B) and two that the AI work adds (C and D).
+
+```mermaid
+flowchart TB
+    eng(["Test engineer"])
+    dev(["Engineer with a coding agent"])
+
+    subgraph desktop["Demo.Desktop.exe: the WPF app"]
+        direction TB
+        ui["Screens<br/>plans · runs · spec sheets"]
+        chat["Chat panel<br/>(off until enabled)"]
+        dcap["Capability catalog"]
+        dlogic["Bench logic"]
+    end
+
+    subgraph cli["demo-cli.exe: the console tool"]
+        direction TB
+        cmds["Commands<br/>plans · run · summary · report"]
+        mcp["MCP server mode<br/>demo-cli mcp"]
+        ccap["Capability catalog"]
+        clogic["Bench logic"]
+    end
+
+    llm["💲 Claude or OpenAI API<br/>billed to the customer's key or gateway"]
+    agent["Claude Code / Codex"]
+    agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
+    ws[("Workspace folder<br/>specs · plans · runs")]
+
+    eng -- "A: clicks" --> ui
+    eng -- "B: types commands" --> cmds
+    eng -- "C: asks a question" --> chat
+    dev -- "D: asks their agent" --> agent
+
+    ui --> dlogic
+    cmds --> clogic
+
+    chat == "C1: 💲 HTTPS, question + list of tools" ==> llm
+    llm == "C2: 💲 'please call tool X'" ==> chat
+    chat -- "C3: runs tool X (after approval if needed)" --> dcap
+    dcap --> dlogic
+
+    agent == "D0: 💲 decides what to do next" ==> agentllm
+    agent -- "D1: starts the process, speaks MCP over stdin/stdout" --> mcp
+    mcp -- "D2: runs the requested tool" --> ccap
+    ccap --> clogic
+
+    dlogic <--> ws
+    clogic <--> ws
+
+    agent -. "not built, optional (§8):<br/>MCP over localhost into the running app" .-> desktop
+
+    classDef paid fill:#fff1c2,stroke:#d97706,color:#000
+    class llm,agentllm paid
+```
+
+**💲 marks every place tokens are spent.** The thick arrows are calls to a model; every other arrow is ordinary local code, process start-up or file access, and costs nothing.
+
+### Reading the diagram
+
+| Path | Who | What happens, step by step | AI involved? | Who pays for AI |
+|---|---|---|---|---|
+| **A** | Engineer at the desktop app | Clicks a button → the screen calls the bench logic directly. *Unchanged legacy behavior.* | No | n/a |
+| **B** | Engineer at a terminal or script | Types `demo-cli run TP-1001` → the command calls the bench logic directly. *Unchanged legacy behavior.* | No | n/a |
+| **C** | Engineer in the chat panel | **C1** 💲 the app sends the question and the list of tools to Claude/OpenAI. **C2** 💲 the model replies "call `create_test_plan_from_spec` with these arguments". **C3** the app shows an approval card if the tool creates files or uses the bench, then runs the tool through the capability catalog, which calls the bench logic (free). The result goes back to the model, 💲 another billed request, and C1 to C3 repeat until it answers in words. | Yes, **our app** talks to the model | The customer, via their API key or gateway |
+| **D** | Engineer using Claude Code / Codex | **D0** 💲 the agent sends the request to its own model, which decides to use one of our tools. **D1** the agent starts `demo-cli mcp` as a child process and talks to it over stdin/stdout. **D2** the console tool runs the tool through the same capability catalog and bench logic and replies (free). The result goes back to the agent's model (💲 again, on the agent's side). The process exits when the agent session ends. | Yes, but **only inside their agent**; our code never talks to a model | The agent user, via their own subscription. Our tool needs no key. |
+
+### Where tokens are spent (and where they aren't)
+
+| Activity | Calls a model? | Whose tokens | What drives the amount |
+|---|---|---|---|
+| Screens and `demo-cli` commands (paths A, B) | **No** | none | n/a |
+| Bench runs, CSV/plot/report writing, analysis, validation | **No.** Ordinary code in Demo.Domain | none | n/a |
+| One message in the chat panel (path C) | **Yes, usually several requests.** One per model↔tool round trip, e.g. 6 for the walkthrough in §6.1 | **The customer's** API key or company gateway | Each request resends the system prompt, the tool definitions and the whole conversation so far, so input tokens grow during a chat. Tool *results* count too, which is why the analysis tools return summaries rather than raw CSV (§9). "New chat" starts from zero. |
+| A coding agent using our tools (path D) | **Our tool: never.** The *agent* calls its own model before and after every tool call | **The agent user's** own subscription. We never see it or pay for it | The agent's own context; our tool descriptions and results are part of it, so short results help here too |
+| "Test connection" in Settings | **Yes**, one tiny request | The customer's key | A few tokens |
+| `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model replays the conversation; the tools still run for real | none | n/a |
+| `DEMO_LIVE_TESTS=1` | **Yes**, one short chat per provider | Whoever's keys are in the environment | A few thousand tokens |
+
+What the customer sees and controls: the panel shows tokens used and an estimated cost after every request; a per-chat dollar limit (default $1.00) is checked *before* each request; and a cap on round trips per message stops a confused model from looping. See §6.4.
+
+### Things the diagram makes explicit
+
+- **Nothing in our apps "calls MCP".** MCP is a *door into* the console tool for coding agents. Our code is the MCP *server*; the agent is the client.
+- **The model never touches files or the bench.** In path C the model only *asks* for a tool by name; our app decides whether to run it (approval) and runs it. In path D the same is true, with the agent in the middle.
+- **Paths A and B don't go through the capability catalog**, and they don't need to. The catalog is the *AI-facing* adapter: tool names, descriptions written for models, JSON schemas, and safety classes. People already have their UI and commands. All four paths end in the same bench logic, so the same rules (limits, ranges, "the bench runs one plan at a time") apply to everyone.
+- **Each program contains its own copy of the catalog and the bench logic.** They are libraries compiled into each exe, not services the exes call. The programs share state only through the workspace folder.
+- **The chat panel and MCP are independent.** You can turn on either, both, or neither.
+
+## 4. Why each piece exists
+
+### The two programs
+
+| Program | What it's for | Why it exists in the demo |
 |---|---|---|
-| `Demo.Domain` | The "legacy" logic. Knows nothing about AI. **Placeholder — will be replaced by a domain that mirrors our real tools.** | none |
-| `Demo.Capabilities` | Catalog of capabilities over the domain; safety classes; conversion to `AIFunction` | `Microsoft.Extensions.AI.Abstractions` |
-| `Demo.Ai` | `IChatClient` factory for Anthropic + OpenAI, credential storage (DPAPI), chat session with tool approval, usage/cost meter, scripted fake client for tests/demos | `Anthropic`, `OpenAI`, `Microsoft.Extensions.AI(.OpenAI)` |
-| `Demo.Mcp` | Registers the catalog as MCP tools, applies exposure policy (read-only vs read-write), stdio and HTTP hosting helpers, bearer-token check | `ModelContextProtocol(.AspNetCore)` |
-| `Demo.Desktop` | WPF app; Settings → AI page; chat side panel; MCP toggle + "copy config" | all of the above |
-| `Demo.Cli` | Console app; normal commands; `mcp` subcommand runs a stdio MCP server | `Demo.Mcp` |
+| **Demo.Desktop.exe** (WPF) | The everyday tool: look at plans, run them, review results and plots. | The **chat assistant lives here** because this is where non-technical users already are. It also knows what the user is looking at (`get_current_view`), so "analyze this run" works. |
+| **demo-cli.exe** (console) | Scripted and batch work, e.g. nightly runs or CI. | **Coding agents connect here** (`demo-cli mcp`). An agent can start it on demand: no app needs to be open, there is no port to secure, and no token. See [ADR-004](adr/004-mcp-via-console-tool.md). There is **no chat** in the console tool: its users automate, and their AI is the agent. See [ADR-005](adr/005-no-chat-in-cli.md). |
 
-## 4. The in-app chatbot (persona 1)
+### The libraries inside them
 
-### 4.1 Provider abstraction
+| Library (project) | Responsibility | Used by | Why it's a separate piece |
+|---|---|---|---|
+| **Demo.Domain**, the "bench logic" | Plans (XML + schema + validation), spec-sheet import, the simulated bench, result files, plots, analysis, report. **Knows nothing about AI.** | Both programs | It's the legacy tool's core. Every way in ends here, so the rules are enforced once. |
+| **Demo.Capabilities**, the "capability catalog" | The list of what AI may do: 13 tools, each with a model-facing description, typed parameters (which become the JSON schema) and a safety class (Read / Write / Execute). | Both programs | Defined **once** and used by both the chat panel and MCP. Without it, chat tools and MCP tools would be written twice and drift apart. See [ADR-001](adr/001-capability-layer.md). |
+| **Demo.Ai** | Talking to Claude/OpenAI (`IChatClient`), the chat loop with approvals, credentials (DPAPI, gateway, env var), cost meter. | Desktop app only | Everything about *our app calling a model*. The console tool doesn't reference it, because it never calls a model. |
+| *(MCP server code, inside demo-cli)* | Turns the catalog into MCP tools and applies the `--allow-writes` / `--allow-runs` policy. | Console tool only | Small adapter: about 100 lines on top of the official MCP SDK. |
 
-We build on **`Microsoft.Extensions.AI.IChatClient`**, the .NET-standard chat abstraction. Both vendors' official SDKs ship an adapter:
+## 5. The capability layer: one list of what AI may do
+
+Each capability is a C# method with an attribute:
+
+```csharp
+[Capability("start_test_run", SafetyClass.Execute, Title = "Start a run on the bench")]
+[Description("Starts running a plan on the bench and returns the new run id at once. ...")]
+public object StartTestRun([Description("Plan id, e.g. 'TP-1002'.")] string planId) => ...
+```
+
+From that one definition we get an `AIFunction` for the chat panel (works with any `IChatClient`) and an MCP tool for agents (`McpServerTool.Create`). The **safety class** decides how each front end treats it:
+
+| Safety class | Capabilities | Chat panel | MCP (console tool) | MCP annotations |
+|---|---|---|---|---|
+| **Read** | `get_bench_info`, `list_spec_files`, `list_test_plans`, `get_test_plan`, `list_test_runs`, `wait_for_test_run`, `get_run_summary`, `query_measurements` | Runs automatically; shown as a "⚙ …" line | Always available | `readOnlyHint: true` |
+| **Write**: creates files | `create_test_plan`, `create_test_plan_from_spec`, `generate_report` | **Approval card** ("The assistant wants to create a file") | Only with `--allow-writes` | `readOnlyHint: false` |
+| **Execute**: uses the hardware | `start_test_run`, `cancel_test_run` | **Approval card** ("The assistant wants to use the test bench") | Only with `--allow-runs` | `readOnlyHint: false`, `openWorldHint: true` |
+
+Write and Execute are separate because they carry different risks. A wrong plan file costs nothing; a wrong bench run ties up shared hardware for hours in real life. An admin might allow an agent to draft plans but not run them.
+
+Business-rule errors ("Temperature 200 °C is outside the bench range -55 to 150 °C") come back to the model as readable results, not exceptions, so it can correct itself or explain the problem to the user.
+
+## 6. Path C in detail: the chat assistant
+
+### 6.1 One conversation, step by step
+
+This is the scripted conversation in the screenshots: the user asks for a plan from the datasheet, has it run, and wants the findings.
+
+```mermaid
+sequenceDiagram
+    actor U as Engineer
+    participant P as Chat panel (our app)
+    participant M as Claude / OpenAI
+    participant C as Capability catalog
+    participant B as Bench logic + files
+
+    U->>P: "Make a hot/cold plan from the LDO-3300 datasheet … run it and tell me what you find"
+    P->>M: 💲 request 1: system prompt + 14 tool definitions + question
+    M-->>P: call list_spec_files
+    P->>C: run (Read: no approval needed)
+    C->>B: list specs/ folder
+    P->>M: 💲 request 2: everything so far + result (2 spec sheets with limits)
+    M-->>P: call create_test_plan_from_spec(LDO-3300_datasheet.csv, -40/25/85/125 °C, 3.6/5 V, 3 units)
+    P-->>U: approval card: "The assistant wants to create a file"
+    U->>P: Approve
+    P->>C: run
+    C->>B: validate against bench rules → write plans/TP-1002.xml
+    P->>M: 💲 request 3: … + result (TP-1002, 120 measurements)
+    M-->>P: call start_test_run(TP-1002)
+    P-->>U: approval card: "The assistant wants to use the test bench"
+    U->>P: Approve
+    P->>C: run → bench starts R-1002 in the background (no tokens while it runs)
+    P->>M: 💲 request 4: … + result (R-1002 started)
+    M-->>P: call wait_for_test_run(R-1002)
+    P->>M: 💲 request 5: … + result (Completed)
+    M-->>P: call get_run_summary(R-1002)
+    C->>B: read results.csv → statistics + findings (computed in code, free)
+    P->>M: 💲 request 6: … + result (verdict, findings, file paths, not the raw CSV)
+    M-->>P: answer in plain words
+    P-->>U: "R-1002 is done: 2 failed … every failure is DUT 3 …" + tokens used and est. cost
+```
+
+**This one message costs 6 billed requests.** Each one resends the system prompt, the tool definitions and the conversation so far, so later requests have more input tokens than earlier ones. The demo script reports illustrative counts of about 21,000 input and 450 output tokens for this message: roughly $0.09 at Claude Opus 5.5 prices, or $0.05 at Sonnet 5.5 prices. Real counts depend on the model and the conversation. The waiting, the bench run and the analysis cost nothing; they happen in our code.
+
+- If the user clicks **Deny**, the tool doesn't run and the model is told "the user declined", so it can suggest something else.
+- The desktop app notices the new plan and run through the same events and file watcher as always, so the grids update and the Runs tab switches to the run in progress.
+
+### 6.2 Provider abstraction
+
+The chat code uses **`Microsoft.Extensions.AI.IChatClient`**, the standard .NET chat abstraction. Both vendors' official SDKs provide one:
 
 - Anthropic: `new AnthropicClient { ApiKey = … }.AsIChatClient("claude-opus-5-5")`
 - OpenAI: `new OpenAIClient(key).GetChatClient("gpt-6-astra").AsIChatClient()`
 
-Everything above that line — tool calling, approval, usage metering, the UI — is provider-neutral. Adding a third provider (Azure OpenAI, Bedrock, a local model) is one factory case. See [ADR-002](adr/002-provider-abstraction.md).
+The tool loop (`FunctionInvokingChatClient`), approvals (`ApprovalRequiredAIFunction`), metering and the UI are provider-neutral. Adding another provider (Azure OpenAI, Bedrock, a local model) is one case in `ChatClientFactory`. See [ADR-002](adr/002-provider-abstraction.md).
 
-**Trade-off we accept:** the abstraction exposes the common subset. Vendor-specific features (Anthropic prompt caching, effort levels; OpenAI reasoning options) are reachable via `ChatOptions.RawRepresentationFactory` per provider when we want them, without leaking into the UI.
-
-### 4.2 Conversation loop with human approval
-
-```mermaid
-sequenceDiagram
-    actor U as User
-    participant P as Chat panel
-    participant S as ChatSession
-    participant L as IChatClient (Claude / OpenAI)
-    participant T as Capability (Read / Write)
-    U->>P: "Which orders are overdue? Bump WO-1003 to high priority."
-    P->>S: Send(text)
-    S->>L: messages + tool schemas
-    L-->>S: call list_overdue_orders()
-    S->>T: invoke (Read → auto-run)
-    T-->>S: result JSON
-    S->>L: tool result
-    L-->>S: call set_work_order_priority(WO-1003, High)
-    S-->>P: approval request (Write)
-    P-->>U: "Claude wants to set WO-1003 priority → High. [Approve] [Deny]"
-    U->>P: Approve
-    P->>S: approve
-    S->>T: invoke
-    T-->>S: ok
-    S->>L: tool result
-    L-->>S: final text
-    S-->>P: answer + token usage + est. cost
-```
-
-- `Read` capabilities run automatically; `Write` capabilities are wrapped in `ApprovalRequiredAIFunction` and surface an approval card. Denials are fed back to the model as a refusal so it can explain or adjust.
-- A per-conversation **iteration cap** and an optional **spend cap** stop runaway loops on the customer's dime.
-- Every tool call is shown in the transcript (collapsed by default) — the user can see exactly what the AI did.
-
-### 4.3 Credentials: the customer pays
+### 6.3 Credentials: the customer pays
 
 ```mermaid
 flowchart TD
@@ -142,90 +258,147 @@ flowchart TD
     env -- yes --> useenv[Use environment key]
     env -- no --> user{User key stored?<br/>DPAPI, CurrentUser}
     user -- yes --> useuser[Use user key]
-    user -- no --> prompt["Show 'Set up AI' card<br/>no network call made"]
+    user -- no --> prompt["Show 'Connect an AI provider' card<br/>no network call made"]
 ```
 
-Supported credential sources, in precedence order (see [ADR-003](adr/003-credential-handling.md)):
+Read it top to bottom. The app uses the first source that is configured:
 
-1. **Enterprise gateway** — IT sets a base URL (and optionally a token) via machine policy; requests go to *their* proxy (LiteLLM, Azure APIM, etc.), which holds the real vendor key, enforces budgets, and logs usage. Keys never touch desktops. *This is what we recommend to large customers.*
-2. **Environment variable** — `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, for scripted or managed rollouts.
-3. **Bring-your-own key** — entered in Settings → AI, encrypted with **Windows DPAPI (CurrentUser scope)** in `%LOCALAPPDATA%`. Never written to plaintext config, never logged, masked in the UI, removable with one click. "Test connection" verifies before saving.
+1. **Company AI gateway.** IT sets a base URL (and optionally a token) by Group Policy. Requests go to *their* proxy (e.g. LiteLLM or Azure API Management), which holds the real vendor key and enforces budgets and logging. Desktops hold no vendor key at all. **This is what we recommend to larger customers.**
+2. **Environment variable**, for scripted rollouts.
+3. **The user's own key**, pasted in Settings, encrypted with Windows DPAPI for that Windows user only, never written to config or logs, and removable with one click.
 
-What we deliberately **don't** do: ship our own vendor key in the binary (extractable by anyone, and we'd pay for everyone's tokens), or ask users to paste keys into a config file.
+What we deliberately **don't** do: ship our own key in the binary (anyone could extract it, and we would pay for everyone), or ask users to paste keys into a config file. See [ADR-003](adr/003-credential-handling.md).
 
-### 4.4 Cost transparency
+### 6.4 Cost visibility and limits
 
-Each response's `UsageDetails` (input/output tokens) feed a meter that shows tokens and an *estimated* cost for the session, using a small editable price table per model. An optional per-session cap blocks further requests once exceeded. This builds trust with customers who are new to pay-per-token billing.
+💲 Every model request in path C is billed to the customer, so they get to see and limit it:
 
-## 5. MCP (persona 2)
+- Each response reports input and output tokens. The panel shows a running total and an *estimated* cost for the chat, from a small price table per model (unknown models show tokens only).
+- An optional per-chat limit (default $1.00) is checked **before** every request, so the request that would go over is never sent.
+- A cap on model↔tool round trips per message (8) stops a confused model from looping on the customer's bill.
 
-Here the customer brings their own agent and their own model subscription — **we need no AI credentials at all.** We just expose the catalog.
+Design choices that keep the bill down:
 
-### 5.1 Console app → stdio
+- Tools return **summaries, not raw data** (§9). A run summary is a few hundred tokens; its raw CSV would be tens of thousands, resent on every later request.
+- **New chat** drops the history, so the next request starts small again.
+- The model is a setting, so a customer can choose a cheaper one (e.g. Sonnet or Haiku instead of Opus).
+- Not done yet: prompt caching for the system prompt and tool definitions, which are identical on every request (§14).
 
+## 7. Path D in detail: coding agents over MCP
+
+```mermaid
+sequenceDiagram
+    actor E as Engineer
+    participant L as 💲 Agent's model (agent user's subscription)
+    participant A as Claude Code / Codex
+    participant S as demo-cli mcp (child process)
+    participant B as Bench logic + files
+
+    E->>A: "Run the rev-B targets over temperature and tell me what fails"
+    A->>S: starts "demo-cli mcp --allow-writes --allow-runs"
+    A->>S: initialize, tools/list (over stdin/stdout, free)
+    S-->>A: tools allowed by the flags + instructions
+    A->>L: 💲 request + our tool definitions
+    L-->>A: use create_test_plan_from_spec(…)
+    A->>S: tools/call create_test_plan_from_spec(…)
+    S->>B: validate → write plans/TP-1002.xml
+    A->>L: 💲 … + result
+    L-->>A: use start_test_run, then wait_for_test_run, then get_run_summary
+    A->>S: tools/call (one at a time, each followed by 💲 a request to the agent's model)
+    S->>B: run → results.csv, plots → analysis (free)
+    S-->>A: verdict, findings, absolute file paths
+    A->>B: (the agent can also open results.csv or the PNGs itself, as ordinary files)
+    A->>L: 💲 … write it up
+    A-->>E: write-up
+    Note over A,S: session ends → the process exits
+    Note over S,B: demo-cli never calls a model and needs no key
 ```
-demo-cli mcp [--allow-writes]
-```
 
-The agent launches the process and talks MCP over stdin/stdout. This is the standard local MCP shape: no ports, no auth, the process lives exactly as long as the agent session. Logging goes to stderr only (stdout is the protocol channel).
+- **No key in our tool, and no tokens on our side.** Every 💲 arrow is between the agent and its own model, on the agent user's subscription. The MCP traffic between the agent and `demo-cli` is free local I/O.
+- **Permissions are set by whoever configures the agent.** `demo-cli mcp` alone is read-only; `--allow-writes` adds plan and report creation; `--allow-runs` adds the bench. The agent's own permission prompts also apply, using the tool annotations.
+- **Why MCP if the agent could just run `demo-cli` commands in a shell?** It can, and that's fine. MCP adds typed tools with descriptions, structured results (no screen-scraping of console output), the same read/write/run tiers as the chat panel, and it works in agents that have no shell.
 
-Claude Code: `claude mcp add demo-cli -- C:\path\Demo.Cli.exe mcp`
+Setup snippets for Claude Code and Codex: [guides/connecting-a-coding-agent.md](guides/connecting-a-coding-agent.md).
 
-### 5.2 WPF app → local Streamable HTTP
+## 8. Optional, not built: MCP inside the desktop app
 
-The WPF app is a long-lived process with live state (open records, what the user is looking at), so the agent should attach to *that* process, not spawn a new one. The app hosts MCP over **Streamable HTTP** on `127.0.0.1` only:
+The dashed arrow in §3. The desktop app *could* also host an MCP server, over HTTP on `127.0.0.1`, so an agent attaches to the window the engineer has open.
 
-- **Off by default.** Enabled in Settings → Agent access.
-- **Loopback-only bind** — never reachable from the network.
-- **Bearer token** generated per install (DPAPI-protected), shown with a **copy-config** button that produces a ready-to-paste snippet for Claude Code / Codex. Protects against other local processes and browser-based DNS-rebinding attacks; we also validate the `Host`/`Origin` headers.
-- **Writes off by default** — read-only capabilities only unless "Allow agents to make changes" is ticked. Tool annotations (`readOnlyHint`, `destructiveHint`) let the agent's own permission UI warn the user too.
-- **Visible** — a status-bar indicator shows when an agent is connected and the last tool it called.
+**When you'd want it:** the agent and the person work on the same thing together. The agent could ask "what run is the user looking at?", and the engineer would watch the agent's actions appear live in the UI.
 
-See [ADR-004](adr/004-mcp-transports.md).
+**Why we didn't build it:**
+- The console tool already covers what agents need. Because everything is files, the desktop app shows the agent's plans and runs live anyway (the file watcher).
+- A listening port has to be secured: loopback-only binding, a per-install bearer token stored with DPAPI, Host/Origin checks against DNS rebinding from web pages, an on/off switch, a visible "agent connected" indicator, and token rotation. That's a lot of security surface for little gain here.
 
-### 5.3 Why no chatbot in the console app
+If a product needs it later, the capability catalog makes the tool side free (same `McpToolAdapter`). Only the hosting and the hardening above are new work. A stdio "shim" exe that relays to the running app over a named pipe is an alternative that avoids opening a port.
 
-Console users are scripters; their natural AI integration is *an agent driving the tool* (MCP), not a chat prompt inside it. A chat REPL would duplicate what Claude Code / Codex already do better, and would need its own credential UX in a terminal. If we ever want it, a one-shot `demo-cli ask "…"` is cheap to add because the chat session lives in `Demo.Ai`. See [ADR-005](adr/005-no-chat-in-cli.md).
+## 9. The app does the work; the model orchestrates and explains
 
-## 6. Security model (summary)
+Two rules make the AI features trustworthy, and they are the most reusable lesson of this demo. See [ADR-006](adr/006-model-orchestrates-app-computes.md).
 
-| Threat | Mitigation |
+1. **The model never writes the plan file.** It calls `create_test_plan_from_spec` or `create_test_plan` with structured arguments. Our code builds the XML, validates it against `TestPlan.xsd` and the bench's rules (ranges, units, known measurements, fixtures, size), and saves it. When a datasheet is the source, limits are copied from the file and never retyped by the model.
+2. **The model never does the statistics.** `get_run_summary` and `query_measurements` compute verdicts, Cpk, drift and worst cases in code, and return findings as sentences. The model chooses *which* analysis to run (e.g. "only 125 °C, only DUT 3") and explains the result. Raw CSV data never goes through the model, which also keeps token costs down.
+
+## 10. Security in one table
+
+| Risk | Mitigation |
 |---|---|
-| API key theft from disk | DPAPI CurrentUser encryption; never in config/logs; gateway option keeps keys off desktops entirely |
-| Model performs unwanted changes (hallucination or prompt injection from data) | Write capabilities require explicit approval in chat; MCP writes off by default; all writes go through domain validation |
-| Runaway spend | Iteration cap, optional spend cap, visible cost meter |
-| Other local processes / web pages hitting the WPF MCP endpoint | Loopback bind, bearer token, Host/Origin validation, off by default |
-| Data leaving the machine unexpectedly | AI is opt-in; first-run dialog states which provider receives data; nothing is sent until the user enables it and sends a message |
+| API key stolen from disk | DPAPI (current Windows user) encryption; never in config or logs; the gateway option keeps keys off desktops entirely |
+| Model does something the user didn't want (mistake, or prompt injection hidden in a spec sheet) | Read tools only, unless a person approves each Write/Execute call; all calls go through bench validation; the catalog is the boundary (there is no "run any command" tool) |
+| Model reads arbitrary files | Spec sheets are read by bare file name from the workspace's `specs` folder only |
+| Runaway spend | Round-trip cap per message, optional per-chat dollar limit, visible meter |
+| Agent misuse through MCP | Read-only by default; `--allow-writes` and `--allow-runs` are separate; stdio means no network listener |
+| Data leaving the PC unexpectedly | Chat is opt-in, with a plain-language disclosure; nothing is sent until the user enables it and sends a message |
 
-Full notes: [security.md](security.md).
+Details: [security.md](security.md).
 
-## 7. Testing strategy
+## 11. Testing
 
-| Layer | Tests | Needs network/key? |
+| Project | What it covers | Network or key? |
 |---|---|---|
-| Domain | Unit tests | No |
-| Capabilities | Each capability against an in-memory domain; schema snapshot; safety-class assertions | No |
-| AI | `ChatSession` against a **scripted fake `IChatClient`** (tool calls, approvals, denials, caps, cost); credential store round-trip | No |
-| AI (live) | Smoke test per provider. **Skipped unless `DEMO_LIVE_TESTS=1`**, because developers often have keys in their environment and that alone must not spend money | Yes (opt-in) |
-| MCP | Real MCP client (`ModelContextProtocol` SDK) against the stdio server (spawns `demo-cli mcp`) and the HTTP server (in-process). Verifies the tool list, annotations, policy, auth rejection, Host/Origin checks, and loopback-only binding | No |
-| UI | FlaUI drives the real WPF app in `--demo` mode: no AI without opt-in, opt-in flow, approve → grid updates, deny → nothing changes, agent reads live selection over MCP | No |
+| `Demo.Domain.Tests` | Seeding, plan XML round-trip and schema, bench rules, spec import and path restriction, the weak-unit finding, filtered analysis, determinism, one-run-at-a-time, cancel, crashed-run detection, report, import | No |
+| `Demo.Capabilities.Tests` | Catalog contents and safety classes, schemas, plan→run→analyze through the capabilities, errors returned as results, Read tools never change files | No |
+| `Demo.Ai.Tests` | Chat loop with a **scripted fake model**: auto-run reads, approval for Write and Execute, denial, cost metering, spend cap, system prompt composition; credential precedence and DPAPI | No |
+| `Demo.Ai.Tests` (Live) | One real call per provider. **Skipped unless `DEMO_LIVE_TESTS=1`**, because developers often have keys in their environment and that alone must not spend money | Yes, opt-in |
+| `Demo.Cli.Tests` | Starts the real `demo-cli mcp` like an agent does: tool list per permission flag, annotations, plan→run→analyze over MCP, files on disk; plain commands still work | No |
+| `Demo.Desktop.UiTests` | Drives the real WPF app with UI Automation: no AI without opt-in, opt-in flow, legacy run button, approve→plan+run+findings, deny→nothing created, console-tool changes appear live | No |
 
-The UI tests and the screenshot tool share one `DesktopDriver` (`tools/Demo.Screenshots/DesktopDriver.cs`), which finds elements by `AutomationId`.
+The UI tests and the screenshot tool open the app **off-screen, without activating it and without a taskbar button**, and drive it through UI Automation patterns (no mouse or keyboard). They never interrupt whoever is using the PC.
 
-## 8. Documentation screenshots are automated
+## 12. Screenshots are generated, not taken by hand
 
-`--demo` mode starts the WPF app with a throwaway profile, seeded data and a **scripted chat client** that replays a canned conversation. The tool calls in it still really execute against the domain, and the approval card is real. No key, no network.
+`scripts/capture-screenshots.ps1` builds the solution and runs `tools/Demo.Screenshots`, which:
 
-`scripts/capture-screenshots.ps1` builds, launches the app, clicks through the walkthrough with FlaUI, connects real MCP clients to both apps, and writes PNGs to `docs/images/`.
+1. Starts the desktop app in `--demo` mode: a fresh example workspace and a **scripted model** that replays the conversation in §6.1. The tools still run for real (real plan file, real bench run, real findings), and the scripted replies are built from the real tool results, so the numbers always match. No key, no network.
+2. Clicks through the walkthrough with UI Automation and asks the app to **render its own window to PNG** over a per-user named pipe (WPF `RenderTargetBitmap`). This works off-screen, with the screen locked, and on build agents, and gives identical images on every machine.
+3. Runs real `demo-cli` commands and a real MCP session, and renders their output as terminal-style images.
+4. Copies one real output plot from the run.
 
-**Capture is done in-process.** In demo mode the app listens on a per-user named pipe. On request it renders a window with WPF's `RenderTargetBitmap` and saves a PNG. Screen-scraping fails when the session is locked, on build agents, and with overlapping windows. In-process rendering works in all of those cases and produces identical images on every machine. Console output is real program output rendered as a terminal-style image for the same reason.
+## 13. Build dependencies (compile time, not runtime)
 
-## 9. Open items
+This shows **which project references which library** when building. It is *not* a picture of calls at runtime; §3 is.
 
-- **Real domain:** replace the placeholder work-order/inventory domain with one that mirrors our actual tools.
+```mermaid
+flowchart BT
+    domain["Demo.Domain<br/>bench logic"]
+    caps["Demo.Capabilities<br/>capability catalog"]
+    ai["Demo.Ai<br/>model clients, chat loop, credentials"]
+    desk["Demo.Desktop<br/>WPF app"]
+    cli["Demo.Cli<br/>console tool + MCP server mode"]
+    caps --> domain
+    ai --> caps
+    desk --> ai
+    cli --> caps
+```
+
+Arrows point from a project to the library it uses. The console tool has no path to `Demo.Ai`, which is how you can tell it never calls a model.
+
+## 14. Open items
+
 - **OpenAI live call returned HTTP 400** with the default model `gpt-6-astra` (Anthropic's live test passes). Needs diagnosis with a couple of real requests; possibly the model expects the Responses API (`GetResponsesClient(...).AsIChatClient()`) or rejects part of a tool schema.
-- **Streaming replies** in the chat panel. Responses are short today, so we use the non-streaming call. Streaming needs care around approvals.
-- **Desktop ↔ console data sync:** the desktop app caches data, so changes made through `demo-cli` while it's open appear only after a restart. A file watcher would fix this for the demo; a real product has a database.
-- Per-capability approval policy (e.g. "always allow this one"), and IT-managed tool allow-lists.
-- Audit log of AI-initiated changes.
-- A "sign in with provider" flow instead of raw keys, if and when vendors offer one suitable for third-party desktop apps.
+- **Prompt caching.** The system prompt and the 14 tool definitions are resent unchanged on every request; caching them would cut input cost noticeably on long chats.
+- **Streaming replies** in the chat panel. Answers are short today; streaming needs care around approval cards.
+- **Approval cards show raw arguments.** A capability could supply a human summary, e.g. "120 measurements, about 5 s of bench time", computed by the app rather than the model.
+- **MCP progress notifications** for long runs, instead of `wait_for_test_run` polling.
+- Per-capability policy set by IT (e.g. "agents may never run the bench"), and an audit log of AI-initiated actions.
+- A "sign in with provider" flow instead of raw keys, if vendors offer one suitable for third-party desktop apps.

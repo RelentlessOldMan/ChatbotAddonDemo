@@ -19,13 +19,6 @@ public sealed record AiSettings
     /// <summary>Optional spend cap per chat session, in USD. Null = no cap.</summary>
     public decimal? SessionSpendCapUsd { get; init; } = 1.00m;
 
-    /// <summary>Agent access (MCP) for the desktop app. Off by default.</summary>
-    public bool McpEnabled { get; init; }
-
-    public bool McpAllowWrites { get; init; }
-
-    public int McpPort { get; init; } = 47821;
-
     public string ModelFor(AiProvider provider) =>
         Models.TryGetValue(provider, out var model) && !string.IsNullOrWhiteSpace(model)
             ? model

@@ -12,6 +12,7 @@ public partial class MainWindow : Window
         viewModel.SettingsRequested += () =>
         {
             var dialog = new SettingsWindow(new SettingsViewModel(services)) { Owner = this };
+            App.MakeUnobtrusive(dialog);
             if (dialog.ShowDialog() == true) viewModel.ApplySettings();
         };
     }

@@ -3,12 +3,12 @@
   Rebuilds the apps and regenerates every image in docs/images by driving the real UI.
 
 .DESCRIPTION
-  Runs Demo.Desktop in --demo mode (seeded data, scripted assistant, throwaway profile),
-  clicks through the walkthrough with UI Automation (FlaUI), connects a real MCP client to
-  both apps, and renders real console output. No API key or network access is needed.
+  Runs Demo.Desktop in --demo mode (example workspace, scripted assistant, throwaway profile),
+  clicks through the walkthrough with UI Automation (FlaUI), runs real demo-cli commands and a
+  real MCP session, and renders everything to PNG. No API key or network access is needed.
 
-  The desktop app's window is captured from the screen, so don't use the mouse/keyboard
-  while it runs (about 30 seconds).
+  The app opens off-screen without taking focus and renders its own windows to PNG, so it
+  doesn't interrupt whatever you're doing. Takes about a minute.
 #>
 param(
     [string]$Configuration = "Debug"
