@@ -3,6 +3,7 @@ using Anthropic;
 using Demo.Ai.Credentials;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 namespace Demo.Ai;
 
@@ -35,12 +36,20 @@ public static class ChatClientFactory
         return client.AsIChatClient(model, MaxOutputTokens);
     }
 
+#pragma warning disable OPENAI001 // The SDK still marks its Responses API as experimental.
     private static IChatClient CreateOpenAI(string model, ResolvedCredential credential)
     {
         var options = new OpenAIClientOptions();
         if (credential.BaseUrl is not null) options.Endpoint = credential.BaseUrl;
         // A gateway may authenticate by network identity and need no token; the SDK still requires a value.
         var client = new OpenAIClient(new ApiKeyCredential(credential.ApiKey ?? "gateway"), options);
-        return client.GetChatClient(model).AsIChatClient();
+        // The Responses API, not Chat Completions: current models reject function tools plus reasoning on
+        // /v1/chat/completions (HTTP 400). Responses are stored server-side by default; customer data shouldn't be,
+        // so storage is off and the full conversation is sent with each request (as with Anthropic).
+        return client.GetResponsesClient().AsIChatClient(model)
+            .AsBuilder()
+            .ConfigureOptions(o => o.RawRepresentationFactory ??= _ => new CreateResponseOptions { StoredOutputEnabled = false })
+            .Build();
     }
+#pragma warning restore OPENAI001
 }

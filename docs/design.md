@@ -395,7 +395,6 @@ Arrows point from a project to the library it uses. The console tool has no path
 
 ## 14. Open items
 
-- **OpenAI live call returned HTTP 400** with the default model `gpt-6-astra` (Anthropic's live test passes). Needs diagnosis with a couple of real requests; possibly the model expects the Responses API (`GetResponsesClient(...).AsIChatClient()`) or rejects part of a tool schema.
 - **Prompt caching.** The system prompt and the 14 tool definitions are resent unchanged on every request; caching them would cut input cost noticeably on long chats.
 - **Streaming replies** in the chat panel. Answers are short today; streaming needs care around approval cards.
 - **Approval cards show raw arguments.** A capability could supply a human summary, e.g. "120 measurements, about 5 s of bench time", computed by the app rather than the model.
