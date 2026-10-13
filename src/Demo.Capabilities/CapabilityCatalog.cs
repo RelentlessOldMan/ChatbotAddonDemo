@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,7 +10,7 @@ namespace Demo.Capabilities;
 
 /// <summary>
 /// The single list of things AI may do with the tool. The in-app chat consumes
-/// <see cref="Capability.Function"/> directly; the MCP servers wrap the same objects.
+/// <see cref="Capability.Function"/> directly; the MCP server (<c>demo-cli mcp</c>) wraps the same objects.
 /// </summary>
 public sealed class CapabilityCatalog
 {
@@ -26,6 +27,13 @@ public sealed class CapabilityCatalog
     public IReadOnlyList<Capability> Capabilities { get; }
 
     public Capability this[string name] => Capabilities.Single(c => c.Name == name);
+
+    /// <summary>Looks up a capability without throwing, e.g. for a tool name a model made up.</summary>
+    public bool TryGet(string name, [MaybeNullWhen(false)] out Capability capability)
+    {
+        capability = Capabilities.FirstOrDefault(c => c.Name == name);
+        return capability is not null;
+    }
 
     public CapabilityCatalog Where(Func<Capability, bool> predicate) => new(Capabilities.Where(predicate));
 
@@ -61,6 +69,7 @@ public sealed class CapabilityCatalog
     {
         var options = new JsonSerializerOptions(AIJsonUtilities.DefaultOptions);
         options.Converters.Add(new JsonStringEnumConverter());
+        options.WriteIndented = false; // results go to models: whitespace only costs tokens
         options.MakeReadOnly(populateMissingResolver: true);
         return options;
     }
@@ -86,4 +95,9 @@ public sealed class CapabilityCatalog
     }
 }
 
+/// <summary>
+/// What a capability returns instead of throwing when a business rule says no. Serializes as
+/// <c>{"error": "..."}</c>, which a chat model reads like any other result; front ends that have
+/// their own error channel (MCP's <c>isError</c>) check for this type.
+/// </summary>
 public sealed record CapabilityError(string Error);

@@ -27,13 +27,26 @@ public static class Program
         var desktopExe = Path.GetFullPath(Arg("--desktop"));
         var cliExe = Path.GetFullPath(Arg("--cli"));
         var outDir = Path.GetFullPath(Arg("--out"));
-        Directory.CreateDirectory(outDir);
-        foreach (var old in Directory.GetFiles(outDir, "*.png")) File.Delete(old);
 
-        // Async work runs on the thread pool; this thread stays STA for WPF rendering.
-        CaptureDesktop(desktopExe, outDir);
-        CaptureConsole(cliExe, outDir);
-        Task.Run(() => CaptureCliMcpAsync(cliExe, outDir)).GetAwaiter().GetResult();
+        // Capture into a staging folder and replace the published images only when every capture worked,
+        // so a failure halfway leaves docs/images as it was rather than with images missing.
+        var staging = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", "images-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+        try
+        {
+            // Async work runs on the thread pool; this thread stays STA for WPF rendering.
+            CaptureDesktop(desktopExe, staging);
+            CaptureConsole(cliExe, staging);
+            Task.Run(() => CaptureCliMcpAsync(cliExe, staging)).GetAwaiter().GetResult();
+
+            Directory.CreateDirectory(outDir);
+            foreach (var old in Directory.GetFiles(outDir, "*.png")) File.Delete(old);
+            foreach (var shot in Directory.GetFiles(staging, "*.png")) File.Copy(shot, Path.Combine(outDir, Path.GetFileName(shot)));
+        }
+        finally
+        {
+            TryDelete(staging);
+        }
 
         Console.WriteLine($"Screenshots written to {outDir}");
         return 0;
@@ -47,8 +60,21 @@ public static class Program
         var workspace = Path.Combine(root, "workspace");
         if (Directory.Exists(root))
             throw new InvalidOperationException($"{root} already exists; move it aside so the screenshots start from a fresh example workspace.");
-        new AiSettingsStore(Path.Combine(profile, "settings.json")).Save(new AiSettings());
+        try
+        {
+            new AiSettingsStore(Path.Combine(profile, "settings.json")).Save(new AiSettings());
+            CaptureDesktop(exe, profile, workspace, outDir);
+        }
+        finally
+        {
+            // Also after a failure, or the next run stops at the check above.
+            TryDelete(profile);
+            TryDelete(root); // created by this run (checked above)
+        }
+    }
 
+    private static void CaptureDesktop(string exe, string profile, string workspace, string outDir)
+    {
         using var d = DesktopDriver.Launch(exe, "--demo", "--profile", profile, "--workspace", workspace);
         string Shot(string name) => Path.Combine(outDir, name);
         var runTimeout = TimeSpan.FromSeconds(40);
@@ -98,77 +124,86 @@ public static class Program
 
         // 9. One of the real output files, as the bench wrote it.
         File.Copy(Path.Combine(workspace, "runs", "R-1002", "plots", "IQ.png"), Shot("09-output-plot-iq.png"), overwrite: true);
-
-        TryDelete(profile);
-        TryDelete(root); // created by this run (checked above)
     }
 
     private static void CaptureConsole(string cliExe, string outDir)
     {
         var workspace = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
         var text = new StringBuilder();
-        foreach (var command in new[]
+        try
         {
-            "plans",
-            "plan from-spec LDO-3300_rev-B_targets.json --temps -40,25,85,125 --supplies 3.6,5 --samples 3",
-            "run TP-1002",
-        })
+            foreach (var command in new[]
+            {
+                "plans",
+                "plan from-spec LDO-3300_rev-B_targets.json --temps -40,25,85,125 --supplies 3.6,5 --samples 3",
+                "run TP-1002",
+            })
+            {
+                text.AppendLine($"> demo-cli {command}");
+                text.AppendLine(Run(cliExe, $"--workspace \"{workspace}\" {command}"));
+            }
+        }
+        finally
         {
-            text.AppendLine($"> demo-cli {command}");
-            text.AppendLine(Run(cliExe, $"--workspace \"{workspace}\" {command}"));
+            TryDelete(workspace);
         }
         RunOnSta(() => TerminalImage.Save("demo-cli: the console tool, no AI involved", text.ToString(), Path.Combine(outDir, "10-console-tool.png"), width: 1180));
-        TryDelete(workspace);
     }
 
     private static async Task CaptureCliMcpAsync(string cliExe, string outDir)
     {
         var workspace = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
         var text = new StringBuilder();
-        await using (var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+        try
         {
-            Name = "demo-cli",
-            Command = cliExe,
-            Arguments = ["--workspace", workspace, "mcp", "--allow-writes", "--allow-runs"],
-            EnvironmentVariables = new Dictionary<string, string?> { ["DEMO_BENCH_DELAY_MS"] = "0" },
-        })))
+            await using (var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = "demo-cli",
+                Command = cliExe,
+                Arguments = ["--workspace", workspace, "mcp", "--allow-writes", "--allow-runs"],
+                EnvironmentVariables = new Dictionary<string, string?> { ["DEMO_BENCH_DELAY_MS"] = "0" },
+            })))
+            {
+                text.AppendLine("agent starts:  demo-cli mcp --allow-writes --allow-runs   (stdio; no port, no key)");
+                text.AppendLine($"server:        {client.ServerInfo.Name} {client.ServerInfo.Version}");
+                text.AppendLine();
+                text.AppendLine("tools/list");
+                foreach (var t in await client.ListToolsAsync())
+                {
+                    var a = t.ProtocolTool.Annotations;
+                    var kind = a?.ReadOnlyHint == true ? "read " : a?.OpenWorldHint == true ? "bench" : "write";
+                    text.AppendLine($"  [{kind}] {t.Name,-27} {t.ProtocolTool.Title}");
+                }
+                text.AppendLine();
+    
+                async Task<JsonElement> Call(string tool, Dictionary<string, object?> args)
+                {
+                    text.AppendLine($"tools/call {tool} {JsonSerializer.Serialize(args)}");
+                    var result = await client.CallToolAsync(tool, args);
+                    return JsonDocument.Parse(string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text))).RootElement;
+                }
+    
+                var plan = await Call("create_test_plan_from_spec", new() { ["specFile"] = "LDO-3300_datasheet.csv", ["samples"] = 3, ["temperaturesC"] = new[] { -40, 25, 85, 125 }, ["supplyVoltages"] = new[] { 3.6, 5.0 } });
+                var planId = plan.GetProperty("plan").GetProperty("id").GetString();
+                text.AppendLine($"  → plan {planId}, {plan.GetProperty("plan").GetProperty("measurementCount")} measurements, saved to {Path.GetFileName(plan.GetProperty("xmlPath").GetString())}");
+                var run = await Call("start_test_run", new() { ["planId"] = planId });
+                var runId = run.GetProperty("run").GetProperty("id").GetString();
+                text.AppendLine($"  → run {runId} started");
+                var done = await Call("wait_for_test_run", new() { ["runId"] = runId });
+                text.AppendLine($"  → {done.GetProperty("status")}, {done.GetProperty("completed")} measurements, {done.GetProperty("failed")} failed");
+                var summary = await Call("get_run_summary", new() { ["runId"] = runId });
+                var s = summary.GetProperty("summary");
+                text.AppendLine($"  → verdict {s.GetProperty("verdict")}; findings:");
+                foreach (var f in s.GetProperty("findings").EnumerateArray().Take(3))
+                    text.AppendLine($"      {f.GetProperty("severity")}: {f.GetProperty("text")}");
+                text.AppendLine($"  → files: {string.Join(", ", new[] { "results.csv", "summary.csv" }.Concat(summary.GetProperty("files").GetProperty("plots").EnumerateArray().Select(p => "plots/" + Path.GetFileName(p.GetString()))))}");
+            }
+        }
+        finally
         {
-            text.AppendLine("agent starts:  demo-cli mcp --allow-writes --allow-runs   (stdio; no port, no key)");
-            text.AppendLine($"server:        {client.ServerInfo.Name} {client.ServerInfo.Version}");
-            text.AppendLine();
-            text.AppendLine("tools/list");
-            foreach (var t in await client.ListToolsAsync())
-            {
-                var a = t.ProtocolTool.Annotations;
-                var kind = a?.ReadOnlyHint == true ? "read " : a?.OpenWorldHint == true ? "bench" : "write";
-                text.AppendLine($"  [{kind}] {t.Name,-27} {t.ProtocolTool.Title}");
-            }
-            text.AppendLine();
-
-            async Task<JsonElement> Call(string tool, Dictionary<string, object?> args)
-            {
-                text.AppendLine($"tools/call {tool} {JsonSerializer.Serialize(args)}");
-                var result = await client.CallToolAsync(tool, args);
-                return JsonDocument.Parse(string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text))).RootElement;
-            }
-
-            var plan = await Call("create_test_plan_from_spec", new() { ["specFile"] = "LDO-3300_datasheet.csv", ["samples"] = 3, ["temperaturesC"] = new[] { -40, 25, 85, 125 }, ["supplyVoltages"] = new[] { 3.6, 5.0 } });
-            var planId = plan.GetProperty("plan").GetProperty("id").GetString();
-            text.AppendLine($"  → plan {planId}, {plan.GetProperty("plan").GetProperty("measurementCount")} measurements, saved to {Path.GetFileName(plan.GetProperty("xmlPath").GetString())}");
-            var run = await Call("start_test_run", new() { ["planId"] = planId });
-            var runId = run.GetProperty("run").GetProperty("id").GetString();
-            text.AppendLine($"  → run {runId} started");
-            var done = await Call("wait_for_test_run", new() { ["runId"] = runId });
-            text.AppendLine($"  → {done.GetProperty("status")}, {done.GetProperty("completed")} measurements, {done.GetProperty("failed")} failed");
-            var summary = await Call("get_run_summary", new() { ["runId"] = runId });
-            var s = summary.GetProperty("summary");
-            text.AppendLine($"  → verdict {s.GetProperty("verdict")}; findings:");
-            foreach (var f in s.GetProperty("findings").EnumerateArray().Take(3))
-                text.AppendLine($"      {f.GetProperty("severity")}: {f.GetProperty("text")}");
-            text.AppendLine($"  → files: {string.Join(", ", new[] { "results.csv", "summary.csv" }.Concat(summary.GetProperty("files").GetProperty("plots").EnumerateArray().Select(p => "plots/" + Path.GetFileName(p.GetString()))))}");
+            TryDelete(workspace);
         }
         RunOnSta(() => TerminalImage.Save("A coding agent's view: MCP session with demo-cli (results shortened)", text.ToString(), Path.Combine(outDir, "11-mcp-session.png"), width: 1180));
-        TryDelete(workspace);
     }
 
     private static string Run(string exe, string arguments)
@@ -178,13 +213,22 @@ public static class Program
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
         info.Environment["DEMO_BENCH_DELAY_MS"] = "0";
         using var process = Process.Start(info)!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        // Read both streams at once: reading one to the end first can deadlock when the other fills its pipe.
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(TimeSpan.FromSeconds(60)))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"demo-cli {arguments} did not exit within 60 s.");
+        }
+        var output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
+        if (process.ExitCode != 0) throw new InvalidOperationException($"demo-cli {arguments} failed ({process.ExitCode}): {output}");
         // Long temp paths make the image unreadable; show the workspace as a short placeholder.
         var workspace = arguments.Split('"')[1];
         return output.Replace(workspace, @"%LOCALAPPDATA%\ChatbotAddonDemo\workspace");

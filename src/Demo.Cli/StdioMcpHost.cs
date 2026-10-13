@@ -13,7 +13,12 @@ namespace Demo.Cli;
 /// </summary>
 public static class StdioMcpHost
 {
-    public static async Task RunAsync(CapabilityCatalog catalog, McpExposurePolicy policy, Implementation serverInfo, string instructions, CancellationToken cancellationToken = default)
+    /// <param name="onStopping">
+    /// Runs while the host shuts down (the client closed stdin, Ctrl+C, or the process is being ended),
+    /// before the process exits; e.g. to cancel a bench run the agent started.
+    /// </param>
+    public static async Task RunAsync(CapabilityCatalog catalog, McpExposurePolicy policy, Implementation serverInfo, string instructions,
+        Func<Task>? onStopping = null, CancellationToken cancellationToken = default)
     {
         var builder = Host.CreateEmptyApplicationBuilder(settings: null);
 
@@ -36,6 +41,16 @@ public static class StdioMcpHost
             .WithStdioServerTransport()
             .WithTools(McpToolAdapter.ToMcpTools(catalog, policy));
 
+        if (onStopping is not null)
+            builder.Services.AddHostedService(_ => new StopCallback(onStopping));
+
         await builder.Build().RunAsync(cancellationToken);
+    }
+
+    private sealed class StopCallback(Func<Task> onStopping) : IHostedService
+    {
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken) => onStopping();
     }
 }

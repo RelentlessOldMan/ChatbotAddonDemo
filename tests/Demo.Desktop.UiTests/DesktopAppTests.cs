@@ -102,9 +102,16 @@ public sealed class DesktopAppTests : IDisposable
     {
         using var d = Launch(new AiSettings());
 
-        var cli = Process.Start(new ProcessStartInfo(RepoFile(@"src\Demo.Cli\bin\{0}\net10.0\demo-cli.exe"),
-            $"--workspace \"{Workspace}\" plan from-spec LDO-3300_datasheet.csv --temps 25,125 --samples 2") { UseShellExecute = false, CreateNoWindow = true })!;
-        cli.WaitForExit();
+        using (var cli = Process.Start(new ProcessStartInfo(RepoFile(@"src\Demo.Cli\bin\{0}\net10.0\demo-cli.exe"),
+            $"--workspace \"{Workspace}\" plan from-spec LDO-3300_datasheet.csv --temps 25,125 --samples 2") { UseShellExecute = false, CreateNoWindow = true })!)
+        {
+            if (!cli.WaitForExit(TimeSpan.FromSeconds(60)))
+            {
+                cli.Kill(entireProcessTree: true);
+                Assert.Fail("demo-cli did not exit within 60 s.");
+            }
+            Assert.Equal(0, cli.ExitCode);
+        }
 
         d.WaitUntil(() => d.Find("PlansGrid").AsDataGridView().Rows.Any(r => r.Cells[0].Value == "TP-1002"), "the new plan to appear");
     }

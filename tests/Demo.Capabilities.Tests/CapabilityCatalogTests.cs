@@ -128,6 +128,27 @@ public sealed class CapabilityCatalogTests : IDisposable
     }
 
     [Fact]
+    public void TryGet_finds_capabilities_by_name_without_throwing()
+    {
+        Assert.True(_catalog.TryGet("start_test_run", out var found));
+        Assert.Equal(SafetyClass.Execute, found.Safety);
+        Assert.False(_catalog.TryGet("made_up_tool", out var missing));
+        Assert.Null(missing);
+    }
+
+    [Fact]
+    public async Task Domain_errors_are_a_distinguishable_result_type()
+    {
+        var result = await _catalog["get_test_plan"].Function.InvokeAsync(new AIFunctionArguments { ["planId"] = "TP-404" });
+
+        Assert.Contains("does not exist", Assert.IsType<CapabilityError>(result).Error);
+    }
+
+    [Fact]
+    public void Results_serialize_compactly() =>
+        Assert.Equal("""{"error":"x"}""", JsonSerializer.Serialize(new CapabilityError("x"), CapabilityCatalog.SerializerOptions));
+
+    [Fact]
     public void Duplicate_names_are_rejected() =>
         Assert.Throws<InvalidOperationException>(() => _catalog.Concat(_catalog));
 

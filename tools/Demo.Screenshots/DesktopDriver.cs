@@ -14,18 +14,16 @@ public sealed class DesktopDriver : IDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
     private readonly Application _app;
-    private readonly UIA3Automation _automation = new();
+    private readonly UIA3Automation _automation;
 
     private readonly string _snapshotPipe;
 
-    private DesktopDriver(Application app, string snapshotPipe)
+    private DesktopDriver(Application app, UIA3Automation automation, string snapshotPipe, Window main)
     {
         _app = app;
+        _automation = automation;
         _snapshotPipe = snapshotPipe;
-        // Not _app.GetMainWindow: it waits forever for Process.MainWindowHandle, which stays empty because the
-        // unobtrusive window has no taskbar button (WPF gives it a hidden owner). Find it through UIA instead.
-        Main = Retry.WhileNull(() => _automation.GetDesktop().FindFirstChild(cf => cf.ByProcessId(_app.ProcessId).And(cf.ByControlType(FlaUI.Core.Definitions.ControlType.Window)))?.AsWindow(),
-            DefaultTimeout, throwOnTimeout: true, timeoutMessage: "The main window did not appear").Result!;
+        Main = main;
     }
 
     public Window Main { get; }
@@ -34,7 +32,24 @@ public sealed class DesktopDriver : IDisposable
     public static DesktopDriver Launch(string exePath, params string[] args)
     {
         var pipe = $"ChatbotAddonDemo-snapshot-{Guid.NewGuid():N}";
-        return new(Application.Launch(new ProcessStartInfo(exePath, [.. args, "--snapshot-pipe", pipe]) { UseShellExecute = false }), pipe);
+        var app = Application.Launch(new ProcessStartInfo(exePath, [.. args, "--snapshot-pipe", pipe]) { UseShellExecute = false });
+        var automation = new UIA3Automation();
+        try
+        {
+            // Not app.GetMainWindow: it waits forever for Process.MainWindowHandle, which stays empty because the
+            // unobtrusive window has no taskbar button (WPF gives it a hidden owner). Find it through UIA instead.
+            var main = Retry.WhileNull(() => automation.GetDesktop().FindFirstChild(cf => cf.ByProcessId(app.ProcessId).And(cf.ByControlType(FlaUI.Core.Definitions.ControlType.Window)))?.AsWindow(),
+                DefaultTimeout, throwOnTimeout: true, timeoutMessage: "The main window did not appear").Result!;
+            return new DesktopDriver(app, automation, pipe, main);
+        }
+        catch
+        {
+            // No driver to dispose yet, so don't leave the app running (or the automation object alive) behind.
+            try { app.Kill(); } catch { /* already gone */ }
+            app.Dispose();
+            automation.Dispose();
+            throw;
+        }
     }
 
     public AutomationElement Find(string automationId, AutomationElement? root = null, TimeSpan? timeout = null) =>
