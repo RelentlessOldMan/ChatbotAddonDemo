@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Demo.Domain;
 
 public enum Verdict { Pass, PassWithWarnings, Fail }
@@ -31,7 +33,10 @@ public sealed record RunSummary(
     int Failed,
     Verdict Verdict,
     IReadOnlyList<Finding> Findings,
-    IReadOnlyList<TestStatistics> Tests);
+    IReadOnlyList<TestStatistics> Tests,
+    RunStatus Status,
+    int Completed,
+    int Total);
 
 /// <summary>
 /// Turns raw measurements into statistics and findings. Deterministic code, not a model, so the
@@ -41,6 +46,8 @@ public static class RunAnalyzer
 {
     /// <summary>Within this fraction of the limit window counts as "close to the limit".</summary>
     public const double GuardBand = 0.10;
+
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
     public static RunSummary Analyze(TestRun run, TestPlan plan, IReadOnlyList<Measurement> all, MeasurementFilter filter)
     {
@@ -53,7 +60,7 @@ public static class RunAnalyzer
             var values = rows.Where(r => r.TestId == test.Id).ToList();
             if (values.Count == 0) continue;
             var definition = Bench.Measurement(test.Id);
-            string F(double v) => v.ToString("F" + definition.Decimals, System.Globalization.CultureInfo.InvariantCulture);
+            string F(double v) => v.ToString("F" + definition.Decimals, Inv);
 
             var mean = values.Average(v => v.Value);
             var sd = values.Count > 1 ? Math.Sqrt(values.Sum(v => (v.Value - mean) * (v.Value - mean)) / (values.Count - 1)) : 0;
@@ -75,10 +82,10 @@ public static class RunAnalyzer
                 if (duts.Count == 1 && values.Select(v => v.Dut).Distinct().Count() > 1)
                     text += $" Every failure is DUT {duts[0]}; the other units pass, which points to a defective unit rather than a design margin problem.";
                 if (temps.Count == 1 && values.Select(v => v.TemperatureC).Distinct().Count() > 1)
-                    text += $" All failures are at {temps[0]:0.#} °C.";
+                    text += string.Create(Inv, $" All failures are at {temps[0]:0.#} °C.");
                 findings.Add(new Finding(FindingSeverity.Fail, test.Id, text));
             }
-            else if (Margin(test, worst.Value) < GuardBand)
+            else if (Window(test) > 0 && Margin(test, worst.Value) < GuardBand) // a one-sided limit of 0 has no window to be "close" in
             {
                 findings.Add(new Finding(FindingSeverity.Warning, test.Id,
                     $"{test.Name} ({test.Id}) passes but is close to its limit ({test.LimitText}): {F(worst.Value)} {test.Units} on {worst.ConditionText}."));
@@ -86,34 +93,49 @@ public static class RunAnalyzer
             else if (cpk is < 1.33 && drift is null) // across a temperature sweep the spread is the sweep, not the process
             {
                 findings.Add(new Finding(FindingSeverity.Warning, test.Id,
-                    $"{test.Name} ({test.Id}) passes everywhere, but Cpk is {cpk:0.00} (below 1.33), so some production parts would likely fail."));
+                    string.Create(Inv, $"{test.Name} ({test.Id}) passes everywhere, but Cpk is {cpk:0.00} (below 1.33), so some production parts would likely fail.")));
             }
 
-            if (drift is { } slope)
+            if (drift is { } slope && Window(test) > 0)
             {
                 var temps = values.Select(v => v.TemperatureC).ToList();
                 var change = slope * (temps.Max() - temps.Min());
                 var share = Math.Abs(change) / Window(test);
                 if (share >= 0.2)
                     findings.Add(new Finding(FindingSeverity.Info, test.Id,
-                        $"{test.Name} ({test.Id}) drifts {slope.ToString("+0.#####;-0.#####", System.Globalization.CultureInfo.InvariantCulture)} {test.Units}/°C: {F(Math.Abs(change))} {test.Units} across {temps.Min():0.#} to {temps.Max():0.#} °C, which uses {share:P0} of the limit window."));
+                        string.Create(Inv, $"{test.Name} ({test.Id}) drifts {slope:+0.#####;-0.#####} {test.Units}/°C: {F(Math.Abs(change))} {test.Units} across {temps.Min():0.#} to {temps.Max():0.#} °C, which uses {share * 100:0}% of the limit window.")));
             }
         }
 
+        if (findings.Count == 0 && rows.Count > 0)
+            findings.Add(new Finding(FindingSeverity.Info, "", $"All {rows.Count} measurements pass with comfortable margin."));
+        // A stopped run's numbers are real but partial: never let it read as a clean pass.
+        if (run.Status != RunStatus.Completed)
+            findings.Add(new Finding(FindingSeverity.Warning, "",
+                $"This run {Stopped(run)} after {all.Count} of {run.Total} measurements; conditions not reached are not covered."));
         var verdict = findings.Any(f => f.Severity == FindingSeverity.Fail) ? Verdict.Fail
             : findings.Any(f => f.Severity == FindingSeverity.Warning) ? Verdict.PassWithWarnings
             : Verdict.Pass;
-        if (findings.Count == 0 && rows.Count > 0)
-            findings.Add(new Finding(FindingSeverity.Info, "", $"All {rows.Count} measurements pass with comfortable margin."));
 
         return new RunSummary(run.Id, plan.Id, plan.Device, filter.Describe(), rows.Count, rows.Count(r => !r.Pass), verdict,
-            findings.OrderBy(f => f.Severity).ToList(), stats);
+            findings.OrderBy(f => f.Severity).ToList(), stats, run.Status, all.Count, run.Total);
     }
 
-    /// <summary>Distance to the nearest limit as a fraction of the limit window (negative when failing).</summary>
+    private static string Stopped(TestRun run) => run.Status switch
+    {
+        RunStatus.Cancelled => "was cancelled",
+        RunStatus.Failed => $"failed ({run.Error ?? "bench error"})",
+        RunStatus.Interrupted => "was interrupted (its program stopped)",
+        _ => $"is {run.Status}",
+    };
+
+    /// <summary>
+    /// Distance to the nearest limit as a fraction of the limit window (negative when failing).
+    /// A one-sided limit of 0 has no window; then the distance is in the test's units, which still ranks values.
+    /// </summary>
     public static double Margin(PlannedTest test, double value)
     {
-        var window = Window(test);
+        var window = Window(test) is > 0 and var w ? w : 1;
         var toMax = test.Max is { } hi ? (hi - value) / window : double.PositiveInfinity;
         var toMin = test.Min is { } lo ? (value - lo) / window : double.PositiveInfinity;
         return Math.Min(toMax, toMin);

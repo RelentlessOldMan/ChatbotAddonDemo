@@ -60,7 +60,7 @@
       <xs:attribute name="id" use="required">
         <xs:simpleType>
           <xs:restriction base="xs:string">
-            <xs:pattern value="TP-[0-9]+"/>
+            <xs:pattern value="TP-[0-9]{1,9}"/>
           </xs:restriction>
         </xs:simpleType>
       </xs:attribute>

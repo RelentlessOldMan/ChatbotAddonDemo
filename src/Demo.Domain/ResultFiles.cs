@@ -44,9 +44,9 @@ public static class ResultFiles
     {
         var sb = new StringBuilder("test,name,units,limits,count,failed,mean,std_dev,lowest,highest,cpk,drift_per_c,worst_case\n");
         foreach (var t in summary.Tests)
-            sb.AppendLine(string.Join(',', t.TestId, Quote(t.Name), t.Units, Quote(t.Limits), t.Count, t.Failed,
+            sb.AppendLine(string.Join(',', t.TestId, Text(t.Name), t.Units, Text(t.Limits), t.Count, t.Failed,
                 t.Mean.ToString(Inv), t.StdDev.ToString(Inv), t.Lowest.ToString("G6", Inv), t.Highest.ToString("G6", Inv),
-                t.Cpk?.ToString(Inv) ?? "", t.DriftPerDegreeC?.ToString(Inv) ?? "", Quote(t.WorstCase)));
+                t.Cpk?.ToString(Inv) ?? "", t.DriftPerDegreeC?.ToString(Inv) ?? "", Text(t.WorstCase)));
         File.WriteAllText(path, sb.ToString(), CsvEncoding);
     }
 
@@ -135,5 +135,7 @@ public static class ResultFiles
         return ("DUT", "#", m => m.Dut);
     }
 
-    private static string Quote(string s) => "\"" + s.Replace("\"", "\"\"") + "\"";
+    /// <summary>A quoted text cell. One that starts like a formula gets a leading ' so Excel shows it instead of evaluating it.</summary>
+    private static string Text(string s) =>
+        "\"" + (s.Length > 0 && s[0] is '=' or '+' or '-' or '@' or '\t' or '\r' ? "'" + s : s).Replace("\"", "\"\"") + "\"";
 }
