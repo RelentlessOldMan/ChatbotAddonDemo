@@ -42,7 +42,11 @@ public static class Program
     private static void CaptureDesktop(string exe, string outDir)
     {
         var profile = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
-        var workspace = Path.Combine(profile, "workspace");
+        // The app shows the workspace path on screen, so use a neutral one rather than a path under the user profile.
+        var root = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "TestBench");
+        var workspace = Path.Combine(root, "workspace");
+        if (Directory.Exists(root))
+            throw new InvalidOperationException($"{root} already exists; move it aside so the screenshots start from a fresh example workspace.");
         new AiSettingsStore(Path.Combine(profile, "settings.json")).Save(new AiSettings());
 
         using var d = DesktopDriver.Launch(exe, "--demo", "--profile", profile, "--workspace", workspace);
@@ -96,6 +100,7 @@ public static class Program
         File.Copy(Path.Combine(workspace, "runs", "R-1002", "plots", "IQ.png"), Shot("09-output-plot-iq.png"), overwrite: true);
 
         TryDelete(profile);
+        TryDelete(root); // created by this run (checked above)
     }
 
     private static void CaptureConsole(string cliExe, string outDir)
