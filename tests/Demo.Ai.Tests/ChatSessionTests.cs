@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Demo.Ai;
 using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
@@ -371,6 +372,53 @@ public sealed class ChatSessionTests : IDisposable
         Assert.Contains("do not use Markdown", second[0].Text);      // generic rules from Demo.Ai
         Assert.Contains("Call get_bench_info before", second[0].Text); // domain instructions from the host app
         Assert.Equal(["a", "one", "b"], second.Skip(1).Select(m => m.Text));
+    }
+
+    /// <summary>A change, and a lookup that stops only when cancelled (and presses Stop itself, to time it exactly).</summary>
+    private sealed class ChangeThenSlowLookup(CancellationTokenSource stop)
+    {
+        public int Changes { get; private set; }
+
+        [Capability("make_change", SafetyClass.Write)]
+        [Description("Makes a change.")]
+        public string MakeChange() => $"change {++Changes} made";
+
+        [Capability("slow_lookup", SafetyClass.Read)]
+        [Description("Looks something up, slowly.")]
+        public async Task<string> SlowLookup(CancellationToken cancellationToken)
+        {
+            await stop.CancelAsync();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return "never";
+        }
+    }
+
+    [Fact]
+    public async Task Stop_while_a_tool_runs_keeps_an_approved_change_that_already_ran()
+    {
+        using var stop = new CancellationTokenSource();
+        var tools = new ChangeThenSlowLookup(stop);
+        // One reply asks for both; the lookup is then asked about too, since the reply needs approval.
+        var model = new ScriptedChatClient(
+        [
+            _ => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("call_change", "make_change"), new FunctionCallContent("call_lookup", "slow_lookup")])),
+            Reply("Yes, the change was made."),
+        ]);
+        var session = new ChatSession(model, CapabilityCatalog.FromObject(tools), new UsageMeter("claude-opus-5-5", null));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("Change it, then look it up", Answer(true), stop.Token));
+
+        Assert.Equal(1, tools.Changes);
+        var results = Contents(session.History).OfType<FunctionResultContent>().ToList();
+        Assert.Contains(results, r => r.CallId == "call_change");
+        AssertSendable(session.History);
+
+        var turn = await session.SendAsync("Was it made?", Answer(true));
+
+        Assert.Equal("Yes, the change was made.", turn.Text);
+        Assert.Contains(Contents(model.Requests[^1]).OfType<FunctionResultContent>(), r => r.CallId == "call_change"); // the model still knows
+        Assert.Equal(1, tools.Changes); // and it wasn't made a second time
     }
 
     public void Dispose()

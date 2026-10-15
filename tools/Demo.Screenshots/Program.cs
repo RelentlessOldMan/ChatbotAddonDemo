@@ -182,7 +182,7 @@ public static class Program
                 foreach (var t in await client.ListToolsAsync(cancellationToken: ct))
                 {
                     var a = t.ProtocolTool.Annotations;
-                    var kind = a?.ReadOnlyHint == true ? "read " : a?.OpenWorldHint == true ? "bench" : "write";
+                    var kind = a?.ReadOnlyHint == true ? "read " : a?.OpenWorldHint == true ? "exec " : "write";
                     text.AppendLine($"  [{kind}] {t.Name,-27} {t.ProtocolTool.Title}");
                 }
                 text.AppendLine();

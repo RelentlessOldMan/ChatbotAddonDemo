@@ -78,6 +78,35 @@ public sealed class LivePathTests : IDisposable
         Assert.Contains(new TestBenchService(workspace, BenchOptions.Instant).ListRuns().Last().Id, turn.Text); // the answer names the run
     }
 
+    /// <summary>
+    /// The conversation continues after an approved change: the second request carries the first turn's thinking,
+    /// tool calls and approval, and the real API must accept it (a scripted model can't check that).
+    /// </summary>
+    [Fact]
+    public async Task Path_C_a_follow_up_question_after_an_approval_is_answered_from_the_conversation()
+    {
+        SkipUnlessLive();
+        var info = ProviderInfo.For(AiProvider.Anthropic);
+        var key = Environment.GetEnvironmentVariable(info.ApiKeyEnvironmentVariable);
+        Assert.SkipWhen(string.IsNullOrEmpty(key), $"{info.ApiKeyEnvironmentVariable} not set");
+
+        var workspace = Path.Combine(_root, "c-follow-up");
+        using var client = ChatClientFactory.Create(AiProvider.Anthropic, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
+        var meter = new UsageMeter(info.DefaultModel, ChatLimitUsd);
+        var session = new ChatSession(client, CapabilityCatalog.FromObject(new TestBenchCapabilities(new TestBenchService(workspace, BenchOptions.Instant))),
+            meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+
+        var first = await session.SendAsync("Create a test plan from LDO-3300_datasheet.csv: 25 °C only, 5 V supply only, 1 unit, IQ only. Don't run it.",
+            (_, _) => Task.FromResult(true), Ct);
+        var created = new TestBenchService(workspace, BenchOptions.Instant).ListPlans().Where(p => p.Id != "TP-1001").ToList();
+        Assert.True(created.Count == 1, $"Expected one new plan, found {created.Count}: {first.Text}");
+
+        var second = await session.SendAsync("What is the ID of the plan you just created? Reply with just the ID.", (_, _) => Task.FromResult(false), Ct);
+        Log($"{info.DisplayName} {info.DefaultModel}: {meter.Summary}\n{first.Text}\n---\n{second.Text}");
+
+        Assert.Contains(created[0].Id, second.Text);
+    }
+
     [Fact]
     public async Task Path_D_Claude_Code_does_the_job_over_MCP()
     {

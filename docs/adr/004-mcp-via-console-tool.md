@@ -21,7 +21,7 @@ Option 2 is documented as an **optional extension, not built** ([design §8](../
 ## Why
 - It covers the need. Plans and results are files in a shared workspace, so whatever the agent does through the console tool shows up in the open desktop app anyway (it watches the folder).
 - It has the smallest security surface: no network listener at all.
-- It's the standard local-MCP shape, so setup is one line in either agent.
+- It's the standard local-MCP shape, so setup is one command in either agent (`claude mcp add …`, `codex mcp add …`).
 - One MCP host means one place to test and document.
 
 ## Consequences

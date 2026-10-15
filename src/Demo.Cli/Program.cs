@@ -132,6 +132,13 @@ catch (Exception ex) when (ex is DomainException or IOException or UnauthorizedA
     Console.Error.WriteLine($"error: {ex.Message}");
     return 1;
 }
+catch (Exception ex)
+{
+    // A bug or a damaged file (e.g. a hand-edited results.csv): still one readable line and exit code 1, so
+    // scripts and agents get the documented behavior rather than a crash and a stack trace.
+    Console.Error.WriteLine($"error: unexpected {ex.GetType().Name}: {ex.Message}");
+    return 1;
+}
 
 static int UsageError(string message)
 {

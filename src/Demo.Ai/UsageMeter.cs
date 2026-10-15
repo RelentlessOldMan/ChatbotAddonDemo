@@ -72,7 +72,8 @@ public sealed class UsageMeter(string model, decimal? capUsd, IReadOnlyDictionar
     /// so far plus a projection for this request would go over the limit, so that request is never sent.
     /// The projection is an estimate, not a quote: input ≈ the larger of the previous request's input tokens
     /// (each request resends the conversation, so it rarely shrinks) and a rough characters/4 count of the
-    /// messages; output ≈ <see cref="ProjectedOutputTokens"/>. A long reply can still end slightly over the limit.
+    /// messages; output ≈ <see cref="ProjectedOutputTokens"/>. One unusually long reply can still end over the limit,
+    /// by at most the cost of one reply of <see cref="ChatClientFactory.MaxOutputTokens"/> (about $0.32 on Opus 5.5).
     /// </summary>
     public void EnsureCanAfford(IEnumerable<ChatMessage> messages)
     {

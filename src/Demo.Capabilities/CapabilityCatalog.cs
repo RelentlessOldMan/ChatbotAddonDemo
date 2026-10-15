@@ -35,8 +35,6 @@ public sealed class CapabilityCatalog
         return capability is not null;
     }
 
-    public CapabilityCatalog Where(Func<Capability, bool> predicate) => new(Capabilities.Where(predicate));
-
     public CapabilityCatalog Concat(CapabilityCatalog other) => new(Capabilities.Concat(other.Capabilities));
 
     /// <summary>Builds capabilities from every <see cref="CapabilityAttribute"/> method on <paramref name="target"/>.</summary>

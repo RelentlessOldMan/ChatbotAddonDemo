@@ -14,7 +14,7 @@ Customers have existing relationships with different AI vendors. We need at leas
 Option 3. `ChatClientFactory` builds an `IChatClient` from the provider, the model name and the resolved credential (a key, or a gateway URL and token). The rest of the app sees only `IChatClient`.
 
 ## Consequences
-- Adding a provider takes a new `AiProvider` value, a `ProviderInfo` entry (display name, default model, key variable) and one `switch` arm in `ChatClientFactory`.
+- Adding a provider takes a new `AiProvider` value, a `ProviderInfo` entry (display name, default model, key variable) and one `switch` arm in `ChatClientFactory`, plus a choice in the Settings dialog and, for dollar limits, its prices in `PriceTable`.
 - The common denominator hides some vendor features. Where we need them, we set them through `ChatOptions.RawRepresentationFactory` inside the provider-specific factory code. Today that's only OpenAI: `store: false`, plus a request for the encrypted reasoning content, which multi-step chats need when OpenAI keeps no copy of the conversation. Anthropic prompt caching would go in the same place (see the design doc's open items).
 - Default models: `claude-opus-5-5` (Anthropic) and `gpt-6-astra` (OpenAI). Both can be changed in Settings because model names change faster than our release cycle.
 - OpenAI goes through the **Responses API** (OpenAI's newer endpoint; `GetResponsesClient().AsIChatClient(model)`), not Chat Completions: current models return HTTP 400 for function tools with reasoning on `/v1/chat/completions`. Response storage is turned off (`store: false`) so customer data isn't kept on OpenAI's side, which means the whole conversation is sent with each request, the same as with Anthropic.

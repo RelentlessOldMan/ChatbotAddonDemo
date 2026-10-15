@@ -91,6 +91,7 @@ public sealed class ChatSession
             {
                 // Recorded before the limits are checked, so a refused request still leaves its record.
                 _lastModelRequest = messages.ToList();
+                cancellationToken.ThrowIfCancellationRequested(); // Stop: what already ran is recorded above
                 if (++_requestsThisMessage > _maxRequestsPerMessage) throw new TurnRequestLimitException(_maxRequestsPerMessage);
                 await next(WithoutApprovalBookkeeping(_lastModelRequest), chatOptions, cancellationToken);
             })
@@ -100,7 +101,9 @@ public sealed class ChatSession
         _chatOptions = new ChatOptions
         {
             Tools = catalog.Capabilities
-                .Select(c => c.Safety == SafetyClass.Read ? c.Function : (AITool)new ApprovalRequiredAIFunction(c.Function))
+                .Select(c => c.Safety == SafetyClass.Read
+                    ? new StopsWithAResult(c.Function)
+                    : (AITool)new ApprovalRequiredAIFunction(new StopsWithAResult(c.Function)))
                 .ToList(),
         };
         _history = [new ChatMessage(ChatRole.System, options.SystemPrompt)];
@@ -173,6 +176,27 @@ public sealed class ChatSession
     }
 
     private static readonly IReadOnlyDictionary<string, object?> EmptyArguments = new Dictionary<string, object?>();
+
+    /// <summary>
+    /// A tool stopped by Stop returns a result saying so instead of throwing. Thrown, it would end the
+    /// function-invocation layer's work at once, and the results of other tools from the same reply (an approved
+    /// change that already ran, say) would be lost with it. Returned, the layer finishes the batch and goes on to
+    /// the next request, which records the whole conversation and is then cancelled; see the middleware above.
+    /// </summary>
+    private sealed class StopsWithAResult(AIFunction inner) : DelegatingAIFunction(inner)
+    {
+        protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await base.InvokeCoreAsync(arguments, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new { error = "Stopped by the user before this finished." };
+            }
+        }
+    }
 
     /// <summary>
     /// The messages that held approval questions and answers are our bookkeeping, not conversation: by the time a

@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Demo.Ai\Demo.Ai.csproj" />
-    <!-- Copies demo-cli.exe next to the tests (paths B and D start the real exe) and brings the MCP client. -->
+    <!-- Builds demo-cli first (paths B and D start the real exe from its own folder; see Paths.cs) and brings the MCP client. -->
     <ProjectReference Include="..\..\src\Demo.Cli\Demo.Cli.csproj" />
   </ItemGroup>
 

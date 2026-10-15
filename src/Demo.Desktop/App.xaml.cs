@@ -17,6 +17,15 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // The AI features are an add-on to a tool people depend on: whatever goes wrong in them (or anywhere in the
+        // UI, e.g. a key that can't be saved) is reported, and the tool keeps running.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            args.Handled = true;
+            System.Diagnostics.Trace.TraceError(args.Exception.ToString());
+            if (!Unobtrusive) // automated runs never put a window in front of the person at the machine
+                MessageBox.Show(MainWindow, $"Something went wrong: {args.Exception.Message}", "TestBench", MessageBoxButton.OK, MessageBoxImage.Error);
+        };
         _services = new AppServices(LaunchOptions.Parse(e.Args));
         if (_services.IsDemo && _services.Options.SnapshotPipe is { } pipe)
         {

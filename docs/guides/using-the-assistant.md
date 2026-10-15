@@ -51,7 +51,7 @@ When the run finishes, it reports the findings:
 - 💲 **Every message you send** costs a little. The assistant usually talks to the provider several times per message: once to decide what to look up, again after each lookup, and once to write the answer. All of it goes on your provider account. The line under the input box shows the running total.
 - **Free:** using TestBench's own screens, running plans on the bench, writing the CSV files and plots, and the analysis itself. These are TestBench, not AI.
 - Long chats get more expensive per message, because the conversation so far is sent each time. Click **New chat** when you change topic.
-- The **spending limit** is checked before every request the assistant sends. If the next request would likely go over, it isn't sent and the assistant tells you. The cost is an estimate, so the total can end up slightly above or below the limit.
+- The **spending limit** is checked before every request the assistant sends. If the next request would likely go over, it isn't sent and the assistant tells you. The cost is an estimate, so the total can end up above or below the limit; one unusually long reply can go over by up to about $0.30.
 
 ## Where do the numbers come from?
 TestBench calculates every number itself (pass/fail, statistics, drift) from the measurement files. The assistant chooses which analysis to run and explains the result. It doesn't do the maths, so the numbers it quotes match the report and the CSV files.

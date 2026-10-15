@@ -140,7 +140,8 @@ public sealed class CapabilityCatalogTests : IDisposable
             var args = new AIFunctionArguments();
             if (capability.Name is "get_test_plan") args["planId"] = "TP-1001";
             if (capability.Name is "wait_for_test_run" or "get_run_summary" or "query_measurements") args["runId"] = "R-1001";
-            await capability.Function.InvokeAsync(args);
+            var result = await capability.Function.InvokeAsync(args);
+            Assert.False(result is CapabilityError, $"{capability.Name} failed, so the test proves nothing: {result}"); // e.g. a renamed parameter
         }
         Assert.Equal(before, Snapshot());
     }

@@ -35,11 +35,20 @@ public static class ChatClientFactory
         CreateAnthropicClient(credential).AsIChatClient(model, MaxOutputTokens);
 
     /// <summary>
-    /// The address is always set explicitly: left unset, the SDK reads ANTHROPIC_BASE_URL from the environment,
-    /// so anything that can set an environment variable could send the user's key and data elsewhere.
+    /// Everything the SDK would otherwise look up for itself is set explicitly, because left to itself it searches
+    /// the PC:
+    /// - The address: unset, it reads ANTHROPIC_BASE_URL, so anything that can set an environment variable could
+    ///   send the user's key and data elsewhere.
+    /// - The credentials: unset, it reads ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and saved sign-in profiles, and
+    ///   adds what it finds to every request, gateway requests included. The key is always given (a placeholder
+    ///   for a gateway without a token, as for OpenAI) and the bearer token cleared; both are needed to stop it.
     /// </summary>
-    internal static AnthropicClient CreateAnthropicClient(ResolvedCredential credential) =>
-        new() { ApiKey = credential.ApiKey, BaseUrl = credential.BaseUrl?.ToString() ?? Anthropic.Core.EnvironmentUrl.Production };
+    internal static AnthropicClient CreateAnthropicClient(ResolvedCredential credential) => new()
+    {
+        ApiKey = credential.ApiKey ?? "gateway",
+        AuthToken = null,
+        BaseUrl = credential.BaseUrl?.ToString() ?? Anthropic.Core.EnvironmentUrl.Production,
+    };
 
 #pragma warning disable OPENAI001 // The SDK still marks its Responses API as experimental.
     private static IChatClient CreateOpenAI(string model, ResolvedCredential credential)
@@ -53,7 +62,11 @@ public static class ChatClientFactory
         // so storage is off and the full conversation is sent with each request (as with Anthropic).
         return client.GetResponsesClient().AsIChatClient(model)
             .AsBuilder()
-            .ConfigureOptions(o => o.RawRepresentationFactory = WithStorageOff(o.RawRepresentationFactory))
+            .ConfigureOptions(o =>
+            {
+                o.MaxOutputTokens ??= MaxOutputTokens; // as for Anthropic, so one reply has a ceiling (and a known worst-case cost)
+                o.RawRepresentationFactory = WithStorageOff(o.RawRepresentationFactory);
+            })
             .Build();
     }
 

@@ -157,10 +157,19 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void OpenSettings() => SettingsRequested?.Invoke();
 
-    /// <summary>Re-reads settings after the Settings dialog closes: shows or hides the assistant.</summary>
-    public void ApplySettings()
+    private string? _appliedSettings;
+
+    /// <summary>
+    /// Re-reads settings after the Settings dialog closes: shows or hides the assistant, or starts it afresh with
+    /// the new provider, model, key or limit. If nothing changed, the conversation is kept.
+    /// </summary>
+    public void ApplySettings(bool credentialsChanged = false)
     {
         var settings = _services.Settings.Load();
+        var applied = System.Text.Json.JsonSerializer.Serialize(settings); // AiSettings holds a dictionary, which records compare by reference
+        if (applied == _appliedSettings && !credentialsChanged) return;
+        _appliedSettings = applied;
+
         Chat?.Shutdown(); // the old panel's request, if any, must not keep running (or billing) in the background
         Chat = settings.ChatEnabled ? new ChatViewModel(_services, settings, OpenSettings) : null;
         IsChatOpen = true;

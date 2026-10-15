@@ -103,11 +103,19 @@ public static class TestPlanXml
     private static string CanonicalName(string id, string name) =>
         Bench.Measurements.FirstOrDefault(m => string.Equals(m.Id, id, StringComparison.OrdinalIgnoreCase))?.Name ?? name;
 
+    private static bool IsXmlText(string text)
+    {
+        try { XmlConvert.VerifyXmlChars(text); return true; }
+        catch (XmlException) { return false; } // e.g. a lone surrogate from badly encoded JSON
+    }
+
     /// <summary>The bench's rules for a runnable plan. Throws <see cref="DomainException"/> with every problem found.</summary>
     public static void Validate(TestPlan plan)
     {
         var problems = new List<string>();
         if (string.IsNullOrWhiteSpace(plan.Name)) problems.Add("The plan needs a name.");
+        else if (plan.Name.Length > 200) problems.Add("The plan name must be at most 200 characters.");
+        else if (plan.Name.Any(char.IsControl) || !IsXmlText(plan.Name)) problems.Add("The plan name can only contain ordinary printable characters.");
         if (!Bench.Fixtures.Contains(plan.Device, StringComparer.OrdinalIgnoreCase))
             problems.Add($"The bench has no fixture for device '{plan.Device}'. Fixtures: {string.Join(", ", Bench.Fixtures)}.");
         if (plan.Samples is < 1 or > Bench.MaxSamples) problems.Add($"Samples must be 1 to {Bench.MaxSamples} units.");

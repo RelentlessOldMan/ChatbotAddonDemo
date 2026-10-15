@@ -79,7 +79,8 @@ public sealed class DesktopAppTests : IDisposable
         d.Click("ApproveButton");
 
         d.WaitUntil(() => d.FindAll("AssistantMessage").Any(m => m.AsTextBox().Text.Contains("Key findings")), "findings", RunTimeout);
-        Assert.Equal("Completed", d.GridCell("RunsGrid", "R-1002", 2));
+        // The grid follows the files through a watcher, so it can lag the chat by a moment.
+        d.WaitUntil(() => d.GridCell("RunsGrid", "R-1002", 2) == "Completed", "the run shown as Completed");
         d.WaitUntil(() => d.Find("RunVerdict").Name == "FAIL", "verdict");
         Assert.Contains("$", d.Find("UsageSummary").Name);
     }

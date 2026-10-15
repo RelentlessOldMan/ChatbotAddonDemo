@@ -305,6 +305,43 @@ public class CredentialTests
         Assert.NotNull(gateway);
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    [InlineData("1", true)]   // REG_SZ instead of the documented DWORD: still a clear "yes"
+    [InlineData("0", false)]
+    [InlineData("yes", true)] // anything else that is present counts as "disabled": an unreadable policy fails closed
+    [InlineData(null, false)] // not set
+    public void A_DisableUserKeys_policy_of_the_wrong_registry_type_still_disables_personal_keys(object? value, bool disabled) =>
+        Assert.Equal(disabled, RegistryMachinePolicy.IsSet(value));
+
+    [Fact]
+    public void A_gateway_address_of_the_wrong_registry_type_blocks_personal_keys_rather_than_being_ignored()
+    {
+        Assert.Null(RegistryMachinePolicy.AsText(null));
+        Assert.Equal("https://gw.example", RegistryMachinePolicy.AsText("https://gw.example"));
+        var multiString = RegistryMachinePolicy.AsText(new[] { "https://gw.example" });
+        Assert.NotNull(multiString);
+
+        var store = new InMemoryCredentialStore();
+        store.Set(CredentialResolver.KeyName(AiProvider.Anthropic), "personal");
+        var resolved = Resolver(store, new FakePolicy(gateway: multiString)).Resolve(AiProvider.Anthropic);
+        Assert.False(resolved.IsAvailable);
+        Assert.Contains("isn't a valid address", resolved.Problem);
+    }
+
+    [Fact]
+    public void Factory_refuses_without_credentials() =>
+        Assert.Throws<InvalidOperationException>(() => ChatClientFactory.Create(AiProvider.Anthropic, "m", ResolvedCredential.None));
+}
+
+[CollectionDefinition(nameof(ProcessEnvironment), DisableParallelization = true)]
+public sealed class ProcessEnvironment;
+
+/// <summary>Changes a process-wide environment variable, so it runs on its own: other tests must not see the value.</summary>
+[Collection(nameof(ProcessEnvironment))]
+public class EnvironmentVariableTests
+{
     [Fact]
     public void Anthropic_address_cannot_be_redirected_by_an_environment_variable()
     {
@@ -325,8 +362,4 @@ public class CredentialTests
             Environment.SetEnvironmentVariable(variable, saved);
         }
     }
-
-    [Fact]
-    public void Factory_refuses_without_credentials() =>
-        Assert.Throws<InvalidOperationException>(() => ChatClientFactory.Create(AiProvider.Anthropic, "m", ResolvedCredential.None));
 }

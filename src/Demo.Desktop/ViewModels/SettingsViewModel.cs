@@ -24,7 +24,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     public bool IsDemo => _services.IsDemo;
-    public bool UserKeysAllowed => _services.Credentials.UserKeysAllowed && !IsDemo;
+    /// <summary>Whether this PC lets people use their own key at all (IT can turn it off).</summary>
+    public bool UserKeysAllowed => _services.Credentials.UserKeysAllowed;
+
+    /// <summary>The key box is shown in demo mode too, so the dialog looks as it will, but nothing can be typed into it.</summary>
+    public bool CanEditKey => UserKeysAllowed && !IsDemo;
 
     // ---- AI assistant -------------------------------------------------------------
 
@@ -107,7 +111,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var credential = _services.ResolveCredential(Provider);
         HasCredential = credential.IsAvailable;
-        CredentialDescription = IsDemo ? "Demo mode: scripted replies, no key needed." : credential.Describe();
+        CredentialDescription = IsDemo ? "Demo mode: scripted replies, no key needed (the key box below is switched off)." : credential.Describe();
     }
 
     // ---- Save ----------------------------------------------------------------------

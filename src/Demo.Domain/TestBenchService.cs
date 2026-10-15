@@ -28,6 +28,9 @@ public sealed class TestBenchService
     /// <summary>A Running run whose heartbeat is older than this was abandoned (its process exited).</summary>
     private static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(15);
 
+    /// <summary>How often a run saves its heartbeat while nothing else happens (e.g. the chamber is settling).</summary>
+    private static readonly TimeSpan HeartbeatEvery = TimeSpan.FromSeconds(5);
+
     private readonly TimeProvider _time;
     private readonly Lock _gate = new();
     private ActiveRun? _active;
@@ -142,7 +145,7 @@ public sealed class TestBenchService
         TryLoadRun(RunId(runId)) ?? throw new DomainException($"Test run '{runId}' does not exist.");
 
     /// <summary>The run currently using the bench, from this process or another one (e.g. the console tool).</summary>
-    /// <remarks>A run of ours that has finished measuring and is only writing its summary and plots doesn't count.</remarks>
+    /// <remarks>A run counts until its files are written, so whoever sees it finished can rely on them.</remarks>
     public TestRun? BenchBusyWith() =>
         _active?.Snapshot() is { Status: RunStatus.Running } mine ? mine : ListRuns().FirstOrDefault(r => r.Status == RunStatus.Running);
 
@@ -156,23 +159,35 @@ public sealed class TestBenchService
             if (BenchBusyWith() is { } busy)
                 throw new DomainException($"The bench is busy with {busy.Id} ({busy.PercentComplete}% done). Wait for it to finish or cancel it.");
 
-            // Another program (the console tool, an MCP server) may be starting a run in the same workspace:
-            // whoever first puts run.json into a folder owns that id; the other takes the next one.
-            TestRun run;
-            do
+            // _gate only covers this process. Other programs (the console tool, an MCP server, another copy of the
+            // app) may be starting a run in the same workspace, so the bench itself is claimed with a file only one
+            // of them can hold. Windows lets go of it if the process dies, so a crash never leaves the bench locked.
+            var benchLock = TryLockBench()
+                ?? throw new DomainException("The bench is busy: another program is starting or running a plan. Wait for it to finish or cancel it there.");
+            try
             {
-                var id = $"R-{NextNumber(RunFolderNames())}";
-                Directory.CreateDirectory(RunFolder(id));
-                var now = _time.GetLocalNow();
-                run = new TestRun(id, plan.Id, plan.Name, plan.Device, RunStatus.Running, now, null, plan.MeasurementCount, 0, 0, now);
-            }
-            while (!TryCreateFile(Path.Combine(RunFolder(run.Id), "run.json"), JsonSerializer.Serialize(run, Json)));
+                // A crashed run's folder may still hold the next id: whoever first puts run.json there owns it.
+                TestRun run;
+                do
+                {
+                    var id = $"R-{NextNumber(RunFolderNames(), "R")}";
+                    Directory.CreateDirectory(RunFolder(id));
+                    var now = _time.GetLocalNow();
+                    run = new TestRun(id, plan.Id, plan.Name, plan.Device, RunStatus.Running, now, null, plan.MeasurementCount, 0, 0, now);
+                }
+                while (!TryCreateFile(Path.Combine(RunFolder(run.Id), "run.json"), JsonSerializer.Serialize(run, Json)));
 
-            // Task is set before the run is published, so WaitForRunAsync/CancelRunAsync never see it null.
-            // ExecuteAsync clears _active under _gate, so it can't do that before this block publishes it.
-            active = new ActiveRun(run);
-            active.Task = Task.Run(() => ExecuteAsync(plan, active));
-            _active = active;
+                // Task is set before the run is published, so WaitForRunAsync/CancelRunAsync never see it null.
+                // ExecuteAsync clears _active under _gate, so it can't do that before this block publishes it.
+                active = new ActiveRun(run, benchLock);
+                active.Task = Task.Run(() => ExecuteAsync(plan, active));
+                _active = active;
+            }
+            catch
+            {
+                benchLock.Dispose();
+                throw;
+            }
         }
         RaiseChanged();
         return active.Snapshot();
@@ -282,7 +297,7 @@ public sealed class TestBenchService
                 await writer.WriteLineAsync(ResultFiles.CsvHeader);
                 foreach (var t in plan.ValuesOf(Bench.Temperature))
                 {
-                    await Wait(Options.SoakTime, active.Cancellation.Token); // chamber settles at the new temperature
+                    await SoakAsync(active); // chamber settles at the new temperature
                     foreach (var v in plan.ValuesOf(Bench.SupplyVoltage))
                     foreach (var load in plan.ValuesOf(Bench.LoadCurrent))
                     for (var dut = 1; dut <= plan.Samples; dut++)
@@ -298,10 +313,8 @@ public sealed class TestBenchService
                         if (_time.GetUtcNow() - lastSave > TimeSpan.FromMilliseconds(250))
                         {
                             await writer.FlushAsync();
-                            try { SaveRun(active.Snapshot()); }
-                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } // progress only; the next save catches up
+                            SaveProgress(active);
                             lastSave = _time.GetUtcNow();
-                            RaiseChanged();
                         }
                     }
                 }
@@ -314,6 +327,7 @@ public sealed class TestBenchService
             ResultFiles.WriteSummaryCsv(RunAnalyzer.Analyze(finished, plan, rows, MeasurementFilter.All), Path.Combine(RunFolder(id), "summary.csv"));
             ResultFiles.WritePlots(plan, rows, Path.Combine(RunFolder(id), "plots"));
             SaveRun(finished); // if this fails, the run is marked Failed below, with the reason
+            active.ReleaseBench();
             active.Publish(finished);
         }
         catch (OperationCanceledException)
@@ -326,6 +340,7 @@ public sealed class TestBenchService
         }
         finally
         {
+            active.ReleaseBench(); // already released, unless something above failed unexpectedly
             lock (_gate) if (_active == active) _active = null;
             RaiseChanged();
         }
@@ -333,18 +348,47 @@ public sealed class TestBenchService
 
     private Task Wait(TimeSpan delay, CancellationToken ct) => delay > TimeSpan.Zero ? Task.Delay(delay, _time, ct) : Task.CompletedTask;
 
+    /// <summary>
+    /// The chamber settling at a new temperature, which takes minutes on a real bench. The heartbeat keeps going
+    /// meanwhile; otherwise other programs would take the run for abandoned after <see cref="StaleAfter"/>.
+    /// </summary>
+    private async Task SoakAsync(ActiveRun active)
+    {
+        for (var left = Options.SoakTime; left > TimeSpan.Zero; left -= HeartbeatEvery)
+        {
+            await Wait(left < HeartbeatEvery ? left : HeartbeatEvery, active.Cancellation.Token);
+            active.Beat(_time.GetLocalNow());
+            SaveProgress(active);
+        }
+    }
+
+    /// <summary>Saves a run's progress for other programs to see. Progress only: if a save fails, the next one catches up.</summary>
+    private void SaveProgress(ActiveRun active)
+    {
+        TrySaveRun(active.Snapshot());
+        RaiseChanged();
+    }
+
+    /// <summary>Claims the bench for a run, or returns null if another program has it. See <see cref="StartRun"/>.</summary>
+    private FileStream? TryLockBench()
+    {
+        Directory.CreateDirectory(RunsFolder); // in case it was deleted since start-up
+        try { return new FileStream(Path.Combine(RunsFolder, ".bench.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException) { return null; } // held by another program (a sharing violation)
+    }
+
     private TestPlan Save(TestPlan draft)
     {
+        TestPlan plan;
         lock (_gate)
         {
             TestPlanXml.Validate(draft);
             Directory.CreateDirectory(PlansFolder); // in case it was deleted since start-up
-            TestPlan plan;
-            do plan = draft with { Id = $"TP-{NextNumber(PlanFiles().Select(Path.GetFileNameWithoutExtension)!)}" };
+            do plan = draft with { Id = $"TP-{NextNumber(PlanFiles().Select(Path.GetFileNameWithoutExtension)!, "TP")}" };
             while (!TryCreateFile(Path.Combine(PlansFolder, plan.Id + ".xml"), TestPlanXml.ToXml(plan))); // another program took that id
-            RaiseChanged();
-            return plan;
         }
+        RaiseChanged(); // outside the lock, so a handler may call back into this service
+        return plan;
     }
 
     private static IReadOnlyList<ConditionSweep> Conditions(IEnumerable<double>? temperatures, IEnumerable<double>? supplies, IEnumerable<double>? loads)
@@ -433,6 +477,7 @@ public sealed class TestBenchService
     private void SaveThenPublish(ActiveRun active, TestRun final)
     {
         TrySaveRun(final);
+        active.ReleaseBench();
         active.Publish(final);
     }
 
@@ -493,7 +538,12 @@ public sealed class TestBenchService
 
     private static int IdNumber(string id) => int.TryParse(id.AsSpan(id.IndexOf('-') + 1), Inv, out var n) ? n : 0;
 
-    private static int NextNumber(IEnumerable<string> ids) => ids.Select(IdNumber).DefaultIfEmpty(1000).Max() + 1;
+    /// <summary>The number after the highest valid id; names that aren't valid ids (e.g. a stray "TP-x.xml") are ignored.</summary>
+    private static int NextNumber(IEnumerable<string> ids, string prefix)
+    {
+        var highest = ids.Where(id => IsValidId(id, prefix)).Select(IdNumber).DefaultIfEmpty(1000).Max();
+        return highest < 999_999_999 ? highest + 1 : throw new DomainException($"There are no {prefix} ids left (the highest is {prefix}-{highest}).");
+    }
 
     private void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
 
@@ -517,10 +567,11 @@ public sealed class TestBenchService
     }
 
     /// <summary>The run in progress in this process. Mutable counters behind a lock; readers get snapshots.</summary>
-    private sealed class ActiveRun(TestRun initial)
+    private sealed class ActiveRun(TestRun initial, FileStream benchLock)
     {
         private readonly Lock _gate = new();
         private TestRun _run = initial;
+        private FileStream? _benchLock = benchLock;
 
         public CancellationTokenSource Cancellation { get; } = new();
         public Task? Task { get; set; }
@@ -531,6 +582,14 @@ public sealed class TestBenchService
         {
             lock (_gate) _run = _run with { Completed = _run.Completed + 1, Failed = _run.Failed + (pass ? 0 : 1), Heartbeat = now };
         }
+
+        public void Beat(DateTimeOffset now)
+        {
+            lock (_gate) _run = _run with { Heartbeat = now };
+        }
+
+        /// <summary>Lets other programs use the bench. Done just before <see cref="Publish"/>, so whoever sees the run finished can start the next one.</summary>
+        public void ReleaseBench() => Interlocked.Exchange(ref _benchLock, null)?.Dispose();
 
         /// <summary>The run as it will be once finished; nobody sees it until <see cref="Publish"/>.</summary>
         public TestRun Ending(RunStatus status, DateTimeOffset now, string? error = null)

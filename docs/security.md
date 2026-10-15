@@ -19,7 +19,7 @@ Scope: the in-app chat assistant (which uses the customer's own credentials) and
 
 ### 2. Key exposure in transit, or to us
 - The app talks to the provider (or the customer's gateway) directly over HTTPS through the official SDKs. **We run no relay.** We never see customer keys, prompts or data.
-- When no gateway is set, the app always uses the provider's official address, so environment variables such as `ANTHROPIC_BASE_URL` can't send a key somewhere else. A gateway value that is present but unusable (not https, or not a valid address) is reported and never falls back to personal keys.
+- When no gateway is set, the app always uses the provider's official address, so environment variables such as `ANTHROPIC_BASE_URL` can't send a key somewhere else. Likewise the credential is always passed to the vendor SDK explicitly: left to itself, the Anthropic SDK adds any credential it finds on the PC (`ANTHROPIC_AUTH_TOKEN`, a saved sign-in profile) to every request, so a personal token would travel to the company gateway too. A test checks that none does. A gateway value that is present but unusable (not https, or not a valid address) is reported and never falls back to personal keys.
 - We do **not** embed a vendor key in our binary. Anyone could extract it, and we would pay for everyone's usage.
 
 ### 3. The model does something the user didn't want

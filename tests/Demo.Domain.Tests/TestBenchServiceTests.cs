@@ -20,10 +20,17 @@ public sealed class TestBenchServiceTests : IDisposable
     }
 
     // Waits for a few measurements rather than a fixed time, so a busy machine doesn't make the test flaky.
-    private static async Task MeasurementsTaken(TestBenchService bench, string runId)
+    private static Task MeasurementsTaken(TestBenchService bench, string runId) =>
+        Until(() => bench.GetRun(runId).Completed >= 3, $"{runId} to take 3 measurements");
+
+    private static async Task Until(Func<bool> condition, string what)
     {
-        for (var i = 0; i < 1000 && bench.GetRun(runId).Completed < 3; i++)
+        for (var i = 0; i < 3000; i++)
+        {
+            if (condition()) return;
             await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+        Assert.Fail($"Gave up waiting 30 s for {what}.");
     }
 
     [Fact]
@@ -536,8 +543,69 @@ public sealed class TestBenchServiceTests : IDisposable
             Assert.Equal("Completed", onDisk.GetProperty("Status").GetString());
             Assert.True(File.Exists(Path.Combine(_bench.Files(run.Id).Folder, "summary.csv")), $"{run.Id} has no summary.csv");
             await _bench.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken); // let the bench go idle
-            while (_bench.BenchBusyWith() is not null) await Task.Delay(1, TestContext.Current.CancellationToken);
+            await Until(() => _bench.BenchBusyWith() is null, "the bench to go idle");
         }
+    }
+
+    [Fact]
+    public async Task Two_programs_starting_runs_at_the_same_moment_never_both_use_the_bench()
+    {
+        // Each round, two programs (separate services on one workspace) start a plan at once: exactly one may run.
+        var options = new BenchOptions(TimeSpan.Zero, TimeSpan.FromMilliseconds(20));
+        var plan = _bench.ListPlans().Single().Id;
+        for (var round = 0; round < 10; round++)
+        {
+            var programs = new[] { new TestBenchService(_workspace, options), new TestBenchService(_workspace, options) };
+            using var bothReady = new Barrier(2);
+            var outcomes = await Task.WhenAll(programs.Select(p => Task.Run(() =>
+            {
+                bothReady.SignalAndWait(TestContext.Current.CancellationToken);
+                try { return (Program: p, Run: p.StartRun(plan), Error: (string?)null); }
+                catch (DomainException ex) { return (Program: p, Run: (TestRun?)null, Error: ex.Message); }
+            })));
+
+            var started = Assert.Single(outcomes, o => o.Run is not null);
+            Assert.Contains("busy", Assert.Single(outcomes, o => o.Run is null).Error);
+            await started.Program.CancelRunAsync(started.Run!.Id);
+        }
+    }
+
+    [Fact]
+    public async Task A_run_whose_chamber_takes_minutes_to_settle_is_not_taken_for_abandoned()
+    {
+        // A real chamber soaks for minutes; no measurement (so no progress save) happens meanwhile.
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.Now);
+        var soaking = new TestBenchService(_workspace, new BenchOptions(TimeSpan.FromMinutes(2), TimeSpan.Zero), time);
+        var watcher = new TestBenchService(_workspace, BenchOptions.Instant, time); // another program
+        var run = soaking.StartRun(_bench.ListPlans().Single().Id);
+
+        for (var second = 1; second <= 40; second++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(20, TestContext.Current.CancellationToken); // lets the run save its heartbeat
+            Assert.Equal(RunStatus.Running, watcher.GetRun(run.Id).Status);
+        }
+        await soaking.CancelRunAsync(run.Id);
+    }
+
+    [Fact]
+    public void Plan_names_that_files_cannot_hold_are_refused_readably()
+    {
+        DomainException Named(string name) => Assert.Throws<DomainException>(() =>
+            _bench.CreatePlanFromSpec("LDO-3300_datasheet.csv", name, [25], null, null, samples: 1));
+
+        Assert.Contains("ordinary printable characters", Named("bad\u0001name").Message);
+        Assert.Contains("ordinary printable characters", Named("half a pair \ud800").Message);
+        Assert.Contains("at most 200 characters", Named(new string('x', 201)).Message);
+    }
+
+    [Fact]
+    public void A_stray_file_with_a_huge_number_does_not_derail_new_ids()
+    {
+        File.WriteAllText(Path.Combine(_bench.PlansFolder, "TP-2147483647.xml"), "not a plan");
+        File.WriteAllText(Path.Combine(_bench.PlansFolder, "TP-99999999999.xml"), "not a plan");
+
+        Assert.Equal("TP-1002", HotCold().Id);
     }
 
     public void Dispose()

@@ -49,7 +49,7 @@
                             <TextBlock Text="{Binding CredentialDescription}" AutomationProperties.AutomationId="CredentialDescription"/>
                         </StackPanel>
 
-                        <StackPanel Visibility="{Binding UserKeysAllowed, Converter={StaticResource BoolToVis}}" Margin="0,8,0,0">
+                        <StackPanel Visibility="{Binding UserKeysAllowed, Converter={StaticResource BoolToVis}}" IsEnabled="{Binding CanEditKey}" Margin="0,8,0,0">
                             <DockPanel>
                                 <Button DockPanel.Dock="Right" Style="{StaticResource PlainButton}" Content="Remove" Margin="6,0,0,0"
                                         Command="{Binding RemoveKeyCommand}"/>
@@ -57,7 +57,7 @@
                                         Click="SaveKey_Click"/>
                                 <PasswordBox x:Name="KeyBox" Padding="4,3" AutomationProperties.AutomationId="ApiKeyBox"/>
                             </DockPanel>
-                            <TextBlock Margin="0,4,0,0" FontSize="11.5">
+                            <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap">
                                 <Hyperlink Command="{Binding OpenKeyPageCommand}"><Run Text="{Binding KeyHelpText, Mode=OneWay}"/></Hyperlink>
                                 <Run Foreground="{StaticResource Muted}" Text=" · stored encrypted for your Windows account only"/>
                             </TextBlock>

@@ -15,7 +15,7 @@ public partial class MainWindow : Window
             var dialog = new SettingsWindow(settings) { Owner = this };
             App.MakeUnobtrusive(dialog);
             // A key saved or removed in the dialog is already in effect, even if the dialog is then cancelled.
-            if (dialog.ShowDialog() == true || settings.CredentialsChanged) viewModel.ApplySettings();
+            if (dialog.ShowDialog() == true || settings.CredentialsChanged) viewModel.ApplySettings(settings.CredentialsChanged);
         };
     }
 }

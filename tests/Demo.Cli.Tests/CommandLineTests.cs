@@ -51,6 +51,21 @@ public sealed class CommandLineTests : IDisposable
     }
 
     [Fact]
+    public void Bad_input_and_damaged_files_are_a_message_and_exit_code_1_never_a_crash()
+    {
+        var badName = Cli("plan", "from-spec", "LDO-3300_datasheet.csv", "--name", "bad\u0001name");
+        Assert.Equal(1, badName.ExitCode);
+        Assert.Contains("ordinary printable characters", badName.Error);
+
+        File.WriteAllText(Path.Combine(_workspace, "runs", "R-1001", "results.csv"), "dut,temp\nnot,numbers\n"); // hand-edited
+        var damaged = Cli("query", "R-1001");
+        Assert.Equal(1, damaged.ExitCode);
+        Assert.StartsWith("error: ", damaged.Error);
+
+        Assert.DoesNotContain("   at ", badName.Error + damaged.Error);
+    }
+
+    [Fact]
     public void Options_may_come_before_the_positional_arguments()
     {
         var result = Cli("plan", "from-spec", "--temps", "25", "--samples", "2", "--tests", "IQ", "LDO-3300_datasheet.csv");

@@ -184,7 +184,7 @@ The run's real output files: `results.csv`, `summary.csv`, a plot per test, and 
 
 ![Console tool](docs/images/10-console-tool.png)
 
-**7. A coding agent's view.** The agent starts `demo-cli mcp`, sees the tools (each marked with its safety class: Read / Write / Execute), and plans, runs and analyzes:
+**7. A coding agent's view.** The agent starts `demo-cli mcp`, sees the tools (each marked with its safety class: read / write / exec), and plans, runs and analyzes:
 
 ![MCP session](docs/images/11-mcp-session.png)
 
@@ -207,17 +207,21 @@ dotnet build ChatbotAddonDemo.sln
 .\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe help
 
 # Tests. Nothing billed: the AI paths talk to a fake AI gateway on 127.0.0.1. The UI tests open the app off-screen.
+# GitHub runs the same tests, except the UI tests, on every push (.github/workflows/build.yml).
 dotnet test ChatbotAddonDemo.sln
 
 # 💲 Paid live tests, only when you explicitly opt in: the same job with real Claude and OpenAI (path C)
-# and real Claude Code and Codex (path D). Roughly $1 in all; the chat and Claude Code stop at $0.50 each.
-$env:DEMO_LIVE_TESTS = '1'; dotnet test --filter Category=Live
+# and real Claude Code and Codex (path D). Roughly $1 in all; the Claude chat and Claude Code stop at $0.50 each,
+# the OpenAI chat at 200,000 tokens, Codex at 5 minutes. Each test skips itself if its key or agent is missing.
+# The switch is removed again afterwards, so a later plain `dotnet test` in this window costs nothing.
+$env:DEMO_LIVE_TESTS = '1'; dotnet test --filter Category=Live; Remove-Item Env:DEMO_LIVE_TESTS
 
-# Re-render every diagram to PNG (docs/images/diagrams) after editing one. Needs Node.js and Chrome or Edge; headless.
+# Re-render every diagram to PNG (docs/images/diagrams) after editing one. Needs Node.js, Chrome or Edge, and
+# internet access the first time (it downloads the Mermaid renderer from npm). Headless.
 node scripts/render-diagrams.mjs
 
-# Regenerate every screenshot in docs/images
-.\scripts\capture-screenshots.ps1
+# Regenerate every screenshot in docs/images (the apps open off-screen)
+powershell -ExecutionPolicy Bypass -File scripts\capture-screenshots.ps1
 ```
 
 Environment variables (all optional):
@@ -228,6 +232,7 @@ Environment variables (all optional):
 | `DEMO_BENCH_DELAY_MS` | `0` makes the simulated bench instant (the tests use this). Any other value, or unset, runs at demo speed (a few seconds per run). |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | A personal key for the chat panel, used when no company gateway is set (see the [IT admin guide](docs/guides/it-admin-deployment.md)). |
 | 💲 `DEMO_LIVE_TESTS` | `1` enables the paid live-API tests. |
+| `DEMO_CLAUDE_EXE`, `DEMO_CODEX_EXE` | Where the live tests find Claude Code or Codex, if not on PATH. |
 
 Connect a coding agent: [docs/guides/connecting-a-coding-agent.md](docs/guides/connecting-a-coding-agent.md).
 
@@ -254,12 +259,12 @@ src/
 tests/                 Domain, capabilities, AI (scripted model), CLI/MCP end-to-end, every path with the same job, desktop UI tests.
 tools/Demo.Screenshots Drives the apps and renders docs/images.
 docs/                  Design, decision records, security, guides, images.
-scripts/               capture-screenshots.ps1
+scripts/               capture-screenshots.ps1, render-diagrams.mjs
 ```
 
 ## Contributing
 
-This is a personal tool, published as-is — **issues and pull requests aren't accepted** (PRs auto-close). Fork it and make it your own. 🔌
+This is a personal project, published as-is — **issues and pull requests aren't accepted** (PRs auto-close). Fork it and make it your own. 🔌
 
 ## License
 

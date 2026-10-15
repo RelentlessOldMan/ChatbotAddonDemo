@@ -27,12 +27,20 @@ The paths below are for an installed copy. **From a clone of this repo**, build 
 
 ## Claude Code
 ```powershell
-claude mcp add testbench -- "C:\Program Files\TestBench\demo-cli.exe" mcp
+claude mcp add --scope user testbench -- "C:\Program Files\TestBench\demo-cli.exe" mcp
 ```
+
+`--scope user` makes it available in every folder; without it, Claude Code only uses it in the folder you ran the command in.
 
 To allow plans and bench runs, add the flags at the end: `… demo-cli.exe" mcp --allow-writes --allow-runs`. To use a specific workspace folder, add `--workspace D:\Lab\workspace` (it can go before or after `mcp`).
 
 ## Codex
+```powershell
+codex mcp add testbench -- "C:\Program Files\TestBench\demo-cli.exe" mcp
+```
+
+That writes this to your Codex configuration, which you can also edit by hand:
+
 ```toml
 # %USERPROFILE%\.codex\config.toml
 [mcp_servers.testbench]
@@ -63,4 +71,4 @@ Instead of `--workspace` you can set the `DEMO_WORKSPACE` environment variable. 
 - Runs take time: call `start_test_run`, then `wait_for_test_run` (up to 120 s per call), then `get_run_summary`. If the session ends mid-run, the tool cancels the run (status *Cancelled*); if it's killed outright, the run shows as *Interrupted* after about 15 s.
 
 ## "Couldn't my agent just run demo-cli commands in a shell?"
-Yes, and that works too (`demo-cli run TP-1002`, `demo-cli summary R-1002`; `demo-cli help` lists the commands, the workspace options and its default). Commands exit with 0 when done, 1 when the command failed (for example `summary` or `query` with filters that match nothing), and 2 when the command line is wrong. MCP adds typed tools with descriptions, structured results instead of console text, and the same safety classes (Read / Write / Execute) the chat assistant has. It also works in agents that have no shell.
+Yes, and that works too (`demo-cli run TP-1002`, `demo-cli summary R-1002`; `demo-cli help` lists the commands, the workspace options and its default). Commands exit with 0 when done, 1 when the command failed (for example a run that doesn't exist, or `summary` or `query` with conditions such as a temperature the run never reached), and 2 when the command line is wrong. MCP adds typed tools with descriptions, structured results instead of console text, and the same safety classes (Read / Write / Execute) the chat assistant has. It also works in agents that have no shell.

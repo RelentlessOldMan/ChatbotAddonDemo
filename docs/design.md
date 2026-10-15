@@ -173,7 +173,7 @@ What the customer sees and controls: the panel shows tokens used and an estimate
 | **Demo.Domain**, the "core logic" | Plans (XML + schema + validation), spec-sheet import, the simulated bench, result files, plots, analysis, report. **Knows nothing about AI.** | Both programs | It's the legacy tool's core. Every way in ends here, so the rules are enforced once. |
 | **Demo.Capabilities**, the "tools for AI" (capability catalog) | The list of what AI may do: 13 shared tools (the desktop app adds a 14th, `get_current_view`, for its chat panel only), each with a model-facing description, typed parameters (which become the JSON schema) and a safety class (Read / Write / Execute). | Both programs | Defined **once** and used by both the chat panel and MCP. Without it, chat tools and MCP tools would be written twice and drift apart. See [ADR-001](adr/001-capability-layer.md). |
 | **Demo.Ai** | Talking to Claude/OpenAI (`IChatClient`), the chat loop with approvals, credentials (DPAPI, gateway, env var), cost meter. | Desktop app only | Everything about *our app calling a model*. The console tool doesn't reference it, because it never calls a model. |
-| *(MCP server code, inside demo-cli)* | Turns the catalog into MCP tools and applies the `--allow-writes` / `--allow-runs` policy. | Console tool only | Small adapter: about 100 lines on top of the official MCP SDK. |
+| *(MCP server code, inside demo-cli)* | Turns the catalog into MCP tools and applies the `--allow-writes` / `--allow-runs` policy. | Console tool only | Small adapter: about 200 lines on top of the official MCP SDK. |
 
 ## 5. The tools for AI (capability catalog): one list of what AI may do
 
@@ -276,7 +276,7 @@ flowchart TD
 <sub>[Download this diagram as PNG](images/diagrams/design--one-conversation-step-by-step-2.png)</sub> <!-- diagram-png -->
 
 - The model never runs anything. It can only reply with words or with a request to run a tool; our code decides what happens next.
-- A Read tool asked for in the same reply as a change is shown on that change's approval card ("The assistant wants to look something up") rather than run silently.
+- A Read tool asked for in the same reply as a change gets an approval card of its own ("The assistant wants to look something up") rather than running silently.
 - The caps are 8 round trips between approvals and 20 model requests per message (§6.4).
 - In code: the loop is Microsoft's `FunctionInvokingChatClient`, which runs Read tools itself and stops at approval-required ones. `ChatSession` shows the card, adds the decision and calls it again. The spending check is `MeteringChatClient`, which sits inside the loop so it sees every request.
 
@@ -287,7 +287,7 @@ The chat code uses **`Microsoft.Extensions.AI.IChatClient`**, Microsoft's provid
 - Anthropic: `new AnthropicClient { ApiKey = … }.AsIChatClient("claude-opus-5-5")`
 - OpenAI: `new OpenAIClient(key).GetResponsesClient().AsIChatClient("gpt-6-astra")`, the Responses API (OpenAI's newer endpoint) with `store: false` (OpenAI keeps no copy of the conversation; see [ADR-002](adr/002-provider-abstraction.md))
 
-The tool loop (`FunctionInvokingChatClient`), approvals (`ApprovalRequiredAIFunction`), metering and the UI are provider-neutral. Adding another provider (Azure OpenAI, Bedrock, a local model) means a new `AiProvider` value, a `ProviderInfo` entry (display name, default model, key variable) and one case in `ChatClientFactory`. See [ADR-002](adr/002-provider-abstraction.md).
+The tool loop (`FunctionInvokingChatClient`), approvals (`ApprovalRequiredAIFunction`), metering and the UI are provider-neutral. Adding another provider (Azure OpenAI, Bedrock, a local model) means a new `AiProvider` value, a `ProviderInfo` entry (display name, default model, key variable) and one case in `ChatClientFactory`, plus a choice in the Settings dialog (which has two radio buttons today) and, for cost limits in dollars, its prices in `PriceTable`. See [ADR-002](adr/002-provider-abstraction.md).
 
 ### 6.3 Credentials: the customer pays
 
@@ -312,7 +312,7 @@ Read it top to bottom. The app uses the first source that is configured:
 2. **Environment variable**, for scripted rollouts.
 3. **The user's own key**, pasted in Settings, encrypted with Windows DPAPI for that Windows user only, never written to config or logs, and removable with one click.
 
-If IT sets the `DisableUserKeys` policy, steps 2 and 3 are skipped: only a gateway can be used. When no gateway is set, the app always uses the provider's official address, so environment variables such as `ANTHROPIC_BASE_URL` can't redirect a key somewhere else.
+If IT sets the `DisableUserKeys` policy, steps 2 and 3 are skipped: only a gateway can be used. When no gateway is set, the app always uses the provider's official address, so environment variables such as `ANTHROPIC_BASE_URL` can't redirect a key somewhere else. The app also gives the vendor SDK its credential explicitly, because the Anthropic SDK otherwise adds any it finds itself (`ANTHROPIC_AUTH_TOKEN`, a saved `ant auth login` profile) to every request, gateway requests included.
 
 What we deliberately **don't** do: ship our own key in the binary (anyone could extract it, and we would pay for everyone), or ask users to paste keys into a config file. See [ADR-003](adr/003-credential-handling.md).
 
@@ -321,7 +321,7 @@ What we deliberately **don't** do: ship our own key in the binary (anyone could 
 💲 Every model request in path C is billed to the customer, so they get to see and limit it:
 
 - Each response reports input and output tokens, and they're added to the chat's total as soon as that request finishes. The panel shows the running total and an *estimated* cost, from a small price table per model.
-- An optional per-chat limit (default $1.00) is checked **before every request**, including the automatic tool round trips inside one message. The app adds a projected cost for the next request to what the chat has spent so far and doesn't send it if the total would go over. The projection is an estimate: for input, the larger of the previous request's input tokens and a rough count of the messages about to be sent (characters ÷ 4), so even the first request can be refused; plus up to 1,000 output tokens. The final total can therefore land slightly above or below the limit.
+- An optional per-chat limit (default $1.00) is checked **before every request**, including the automatic tool round trips inside one message. The app adds a projected cost for the next request to what the chat has spent so far and doesn't send it if the total would go over. The projection is an estimate: for input, the larger of the previous request's input tokens and a rough count of the messages about to be sent (characters ÷ 4), so even the first request can be refused; plus 1,000 output tokens. The final total can therefore land above or below the limit: at worst, one unusually long reply goes over by the cost of one maximum-length reply (16,000 output tokens, about $0.32 on Opus 5.5).
 - **Models with no known price** (currently all OpenAI models, because we don't ship prices we haven't verified) get a **token limit** instead: 500,000 tokens per chat by default. The usage line says so, e.g. "84,000 tokens (limit 500k tokens; no price known for gpt-6-astra)". Turning the limit off in Settings turns both off.
 - Two caps stop a confused model from looping on the customer's bill: at most 8 model↔tool round trips between approvals, and at most 20 model requests per message in total. Hitting either ends the message with a notice instead of spending more.
 - The limit box in Settings accepts only a dollar amount above zero (e.g. `1.50`, optionally with `$`) or empty for no limit; anything else is refused with "Enter a dollar amount above zero, such as 1.50, or leave the box empty for no limit." and Save stays disabled, so a typo can't silently remove the limit.
@@ -380,7 +380,7 @@ The dashed arrow in §3. The desktop app *could* also host an MCP server, over H
 - The console tool already covers what agents need. Because everything is files, the desktop app shows the agent's plans and runs live anyway (the file watcher).
 - A listening port has to be secured: loopback-only binding, a per-install bearer token stored with DPAPI, Host/Origin checks against DNS rebinding from web pages, an on/off switch, a visible "agent connected" indicator, and token rotation. That's a lot of security surface for little gain here.
 
-If a product needs it later, the tools for AI (capability catalog) make the tool side free (same `McpToolAdapter`). Only the hosting and the hardening above are new work. A stdio "shim" exe that relays to the running app over a named pipe is an alternative that avoids opening a port.
+If a product needs it later, the tools for AI (capability catalog) make the tool side free (the same `McpToolAdapter`, moved from demo-cli into a shared library). Only the hosting and the hardening above are new work. A stdio "shim" exe that relays to the running app over a named pipe is an alternative that avoids opening a port.
 
 ## 9. The app does the work; the model orchestrates and explains
 
@@ -412,10 +412,12 @@ Details: [security.md](security.md).
 | `Demo.Ai.Tests` (Live) | 💲 One short chat (a few requests) per provider. **Skipped unless `DEMO_LIVE_TESTS=1`**, because developers often have keys in their environment and that alone must not spend money | Yes, opt-in |
 | `Demo.Cli.Tests` | Starts the real `demo-cli mcp` like an agent does: tool list per `--allow-…` flag, annotations, plan→run→analyze over MCP, files on disk, readable errors for bad arguments, the run cancelled when the agent disconnects; plain commands: command-line parsing and exit codes 0/1/2 | No |
 | `Demo.Paths.Tests` | **One job, every path**: the walkthrough job (plan from the datasheet, run, findings) done on the command line (B), in the chat (C) and over MCP (D) must give the same plan and findings, and what one path makes the others see. Path C goes through IT's gateway policy, the real Claude and OpenAI SDKs and real HTTP to a **fake AI gateway** on 127.0.0.1 with a scripted model, checking approvals, the gateway token on every request, the whole conversation resent, no empty messages, OpenAI storage off, Deny, and the spending limit | No |
-| `Demo.Paths.Tests` (Live) | 💲 The same job with real Claude and OpenAI in the chat, and with real Claude Code and Codex over MCP, each compared with the command-line result. The chat and Claude Code stop at $0.50 each; Codex has no spending option, so its run is limited to 5 minutes. **Skipped unless `DEMO_LIVE_TESTS=1`** | Yes, opt-in |
+| `Demo.Paths.Tests` (Live) | 💲 The same job with real Claude and OpenAI in the chat, and with real Claude Code and Codex over MCP, each compared with the command-line result, plus a follow-up question to real Claude after an approved change (the second request must be accepted and answered from the conversation). The Claude chat and Claude Code stop at $0.50 each, the OpenAI chat (no known price) at 200,000 tokens; Codex has no spending option, so its run is limited to 5 minutes. Each test skips itself if its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) or agent (`claude`, `codex` on PATH, or `DEMO_CLAUDE_EXE` / `DEMO_CODEX_EXE`) is missing. **Skipped unless `DEMO_LIVE_TESTS=1`** | Yes, opt-in |
 | `Demo.Desktop.UiTests` | Drives the real WPF app with UI Automation: no AI without opt-in, opt-in flow, legacy run button, approve→plan+run+findings, deny→nothing created, console-tool changes appear live | No |
 
 The UI tests and the screenshot tool open the app **off-screen, without activating it and without a taskbar button**, and drive it through UI Automation patterns (no mouse or keyboard). They never interrupt whoever is using the PC.
+
+GitHub Actions (`.github/workflows/build.yml`) builds everything and runs the free test projects on every push. It never runs the paid tests (no keys are available there) or the UI tests (they need an interactive desktop).
 
 ## 12. Screenshots are generated, not taken by hand
 

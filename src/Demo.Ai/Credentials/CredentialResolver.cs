@@ -63,23 +63,36 @@ public sealed class RegistryMachinePolicy : IMachinePolicy
 {
     private const string Root = @"Software\Policies\ChatbotAddonDemo";
 
-    public string? GatewayUrl(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayUrl");
+    public string? GatewayUrl(AiProvider provider) => AsText(Read($@"{Root}\{provider}", "GatewayUrl"));
 
-    public string? GatewayToken(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayToken");
+    public string? GatewayToken(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayToken") as string; // a wrong type is just no token: the gateway refuses
 
-    public bool DisableUserKeys
+    public bool DisableUserKeys => IsSet(Read(Root, "DisableUserKeys"));
+
+    // A policy value of an unexpected registry type is still a policy: it fails closed rather than being ignored.
+
+    /// <summary>"Off" only when absent or zero; any other value, of any type, means "on".</summary>
+    internal static bool IsSet(object? value) => value switch
     {
-        get
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(Root);
-            return key?.GetValue("DisableUserKeys") is int value && value != 0;
-        }
-    }
+        null => false,
+        int number => number != 0,
+        long number => number != 0,
+        string text => text.Trim() != "0",
+        _ => true,
+    };
 
-    private static string? Read(string path, string name)
+    /// <summary>A non-text value becomes an empty (so invalid) address, which blocks personal keys instead of being skipped.</summary>
+    internal static string? AsText(object? value) => value switch
+    {
+        null => null,
+        string text => text,
+        _ => "",
+    };
+
+    private static object? Read(string path, string name)
     {
         using var key = Registry.LocalMachine.OpenSubKey(path);
-        return key?.GetValue(name) as string;
+        return key?.GetValue(name);
     }
 }
 
