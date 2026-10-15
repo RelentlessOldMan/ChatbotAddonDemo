@@ -32,7 +32,7 @@ This covers model mistakes and **prompt injection from data**, e.g. a spec sheet
 - Every tool call is visible in the chat transcript.
 
 ### 4. Runaway spend
-- A cap on model↔tool round trips between approvals (`MaxToolIterations`) and an optional per-chat **limit** (default $1.00), checked before every model request including automatic tool round trips. Models with no known price get a token limit (default 500,000) instead.
+- Caps on model↔tool round trips between approvals (`MaxToolIterations`, 8) and on model requests per message (`MaxModelRequestsPerMessage`, 20) and an optional per-chat **limit** (default $1.00), checked before every model request including automatic tool round trips. Models with no known price get a token limit (default 500,000) instead.
 - A running token count and estimated cost under the input box.
 - Enterprises get hard budgets at their gateway.
 
@@ -43,6 +43,31 @@ This covers model mistakes and **prompt injection from data**, e.g. a spec sheet
 - The agent uses its own model subscription or API key; our tool needs no AI credentials in this path.
 
 ### 6. Data leaving the PC
+
+```mermaid
+flowchart LR
+    subgraph pc["The customer's PC"]
+        direction TB
+        ab["A: screens · B: console commands"]
+        chat["C: chat panel"]
+        mcp["demo-cli mcp"]
+        agent["D: coding agent<br/>Claude Code / Codex"]
+        ws[("Workspace files")]
+    end
+    prov["💲 Claude / OpenAI,<br/>or the company AI gateway"]
+    agentprov["💲 The agent's AI provider"]
+
+    ab --- ws
+    chat == "the customer's key or gateway token<br/>+ the whole conversation: questions,<br/>tool results, earlier answers" ==> prov
+    mcp -- "tool results over stdin/stdout<br/>(stays on the PC)" --> agent
+    agent == "the agent's context,<br/>including our tool results" ==> agentprov
+
+    classDef paid fill:#fff1c2,stroke:#d97706,color:#000
+    class prov,agentprov paid
+```
+
+Thick arrows are the only traffic that leaves the PC. Paths A and B send nothing anywhere.
+
 - Turning on the assistant shows a plain-language note: what is sent, to whom, and who pays.
 - Nothing is sent until the user enables the assistant *and* sends a message. There's no background traffic.
 - The analysis tools return summaries, so raw measurement data usually doesn't need to be sent at all ([ADR-006](adr/006-model-orchestrates-app-computes.md)).

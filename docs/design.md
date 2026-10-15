@@ -145,7 +145,7 @@ flowchart TB
 | `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model replays the conversation; the tools still run for real | none | n/a |
 | 💲 `DEMO_LIVE_TESTS=1` | **Yes**, one short chat (a few requests) per provider | Whoever's keys are in the environment | A few thousand tokens |
 
-What the customer sees and controls: the panel shows tokens used and an estimated cost after every request; a per-chat limit (default $1.00) is checked *before* every request, including the automatic lookups within one message; and a cap on round trips between approvals stops a confused model from looping. See §6.4.
+What the customer sees and controls: the panel shows tokens used and an estimated cost after every request; a per-chat limit (default $1.00) is checked *before* every request, including the automatic lookups within one message; and caps on round trips (8 between approvals, 20 requests per message) stop a confused model from looping. See §6.4.
 
 ### Things the diagram makes explicit
 
@@ -246,6 +246,36 @@ sequenceDiagram
 - If the user clicks **Deny**, the tool doesn't run and the model is told "the user declined", so it can suggest something else.
 - The desktop app notices the new plan and run through the same events and file watcher as always, so the grids update and the Runs tab switches to the run in progress.
 
+**The same thing as rules.** The sequence above is one example. This is what happens for every message, whatever the model asks for:
+
+```mermaid
+flowchart TD
+    msg([You send a message]) --> check{"Within the spending limit<br/>and the request caps?"}
+    check -- no --> halt(["Stop with a notice<br/>nothing more is sent"])
+    check -- yes --> send["💲 Send to the model:<br/>the whole conversation + the list of tools"]
+    send --> reply{"What does the model reply?"}
+    reply -- "an answer in words" --> done(["Show the answer<br/>+ tokens used and estimated cost"])
+    reply -- "please run tool X" --> known{"Is X one of the<br/>tools for AI?"}
+    known -- no --> nosuch["Tell the model:<br/>there is no such tool"]
+    known -- yes --> safety{"X's safety class"}
+    safety -- Read --> run["Our code runs X<br/>through the core logic (free)"]
+    safety -- "Write or Execute" --> card["Approval card shows X<br/>and its arguments"]
+    card -- Approve --> run
+    card -- Deny --> declined["Tell the model:<br/>the user declined"]
+    run --> result["Add the result<br/>to the conversation"]
+    result --> check
+    nosuch --> check
+    declined --> check
+
+    classDef paid fill:#fff1c2,stroke:#d97706,color:#000
+    class send paid
+```
+
+- The model never runs anything. It can only reply with words or with a request to run a tool; our code decides what happens next.
+- A Read tool asked for in the same reply as a change is shown on that change's approval card ("The assistant wants to look something up") rather than run silently.
+- The caps are 8 round trips between approvals and 20 model requests per message (§6.4).
+- In code: the loop is Microsoft's `FunctionInvokingChatClient`, which runs Read tools itself and stops at approval-required ones. `ChatSession` shows the card, adds the decision and calls it again. The spending check is `MeteringChatClient`, which sits inside the loop so it sees every request.
+
 ### 6.2 Provider abstraction
 
 The chat code uses **`Microsoft.Extensions.AI.IChatClient`**, Microsoft's provider-neutral chat interface. Both vendors' official SDKs provide one:
@@ -288,7 +318,8 @@ What we deliberately **don't** do: ship our own key in the binary (anyone could 
 - Each response reports input and output tokens, and they're added to the chat's total as soon as that request finishes. The panel shows the running total and an *estimated* cost, from a small price table per model.
 - An optional per-chat limit (default $1.00) is checked **before every request**, including the automatic tool round trips inside one message. The app adds a projected cost for the next request to what the chat has spent so far and doesn't send it if the total would go over. The projection is an estimate: for input, the larger of the previous request's input tokens and a rough count of the messages about to be sent (characters ÷ 4), so even the first request can be refused; plus up to 1,000 output tokens. The final total can therefore land slightly above or below the limit.
 - **Models with no known price** (currently all OpenAI models, because we don't ship prices we haven't verified) get a **token limit** instead: 500,000 tokens per chat by default. The usage line says so, e.g. "84,000 tokens (limit 500k tokens; no price known for gpt-6-astra)". Turning the limit off in Settings turns both off.
-- A cap of 8 model↔tool round trips between approvals stops a confused model from looping on the customer's bill.
+- Two caps stop a confused model from looping on the customer's bill: at most 8 model↔tool round trips between approvals, and at most 20 model requests per message in total. Hitting either ends the message with a notice instead of spending more.
+- The limit box in Settings accepts only a dollar amount above zero (e.g. `1.50`, optionally with `$`) or empty for no limit; anything else is refused with "Enter a dollar amount above zero, such as 1.50, or leave the box empty for no limit." and Save stays disabled, so a typo can't silently remove the limit.
 
 Design choices that keep the bill down:
 
@@ -359,7 +390,7 @@ Two rules make the AI features trustworthy, and they are the most reusable lesso
 | API key stolen from disk | DPAPI (current Windows user) encryption; never in config or logs; the gateway option keeps keys off desktops entirely |
 | Model does something the user didn't want (mistake, or prompt injection hidden in a spec sheet) | Read tools only, unless a person approves each Write/Execute call; all calls go through bench validation; the catalog is the boundary (there is no "run any command" tool) |
 | Model reads arbitrary files | Spec sheets are read by bare file name from the workspace's `specs` folder only |
-| Runaway spend | Round-trip cap, per-chat limit checked before every request (dollars, or tokens for unpriced models), visible meter |
+| Runaway spend | Round-trip and per-message request caps, per-chat limit checked before every request (dollars, or tokens for unpriced models), visible meter |
 | Agent misuse through MCP | Read-only by default; `--allow-writes` and `--allow-runs` are separate; stdio means no network listener |
 | Data leaving the PC unexpectedly | Chat is opt-in, with a plain-language disclosure; nothing is sent until the user enables it and sends a message. In path D our tool results go to the agent's AI provider under the agent user's terms; our console tool itself never calls a model |
 

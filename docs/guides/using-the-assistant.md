@@ -23,7 +23,7 @@ An account with **Anthropic** (Claude) or **OpenAI**, and an API key from that a
 1. Open **Settings**.
 2. Read the short note about what is sent, then tick **Enable the AI assistant**.
 3. Choose your provider, paste your API key, and click **Save key**. Click **Test connection** to check that it works. 💲 This sends one tiny request, so it costs a fraction of a cent.
-4. Optionally set a **spending limit per chat**. The default is $1.00. (If TestBench doesn't know your model's prices, it limits tokens instead and says so under the input box.)
+4. Optionally set a **spending limit per chat**. The default is $1.00. Type a dollar amount such as `1.50`, or leave the box empty for no limit. (If TestBench doesn't know your model's prices, it limits tokens instead and says so under the input box.)
 5. Click **Save**. The **Assistant** panel appears on the right.
 
 ![Settings](../images/04-settings-ai-assistant.png)

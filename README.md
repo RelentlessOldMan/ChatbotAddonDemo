@@ -101,7 +101,52 @@ The important points:
 - **The tools for AI (capability catalog) are defined once**: 13 tools, each with a name and description the model reads, its inputs, and a safety class (Read / Write / Execute). They are used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same core logic, so the same rules apply to everyone.
 - **MCP inside the desktop app is optional and not built.** The design explains when you'd want it and what it would take to secure.
 
-**Full explanation, with step-by-step sequence diagrams: [docs/design.md](docs/design.md).**
+**Full explanation, with step-by-step sequence diagrams and the rules for every chat message: [docs/design.md](docs/design.md).** What leaves the PC on each path is drawn in [docs/security.md](docs/security.md#6-data-leaving-the-pc).
+
+## Applying this to your own tool
+
+TestBench is only the example. For your own desktop tool, the existing parts stay as they are and you add three new ones (blue):
+
+```mermaid
+flowchart TB
+    subgraph before["Before"]
+        direction TB
+        p1(["People"])
+        s1["Your screens"]
+        c1["Your command line"]
+        l1["Your core logic"]
+        p1 --> s1 --> l1
+        p1 --> c1 --> l1
+    end
+
+    subgraph after["After"]
+        direction TB
+        p2(["People"])
+        a2(["People with<br/>a coding agent"])
+        s2["Your screens"]
+        chat["Chat panel<br/>opt-in, customer's key"]
+        c2["Your command line"]
+        mcp["MCP mode<br/>of your command line"]
+        tools["Tools for AI<br/>name, description, inputs,<br/>safety class"]
+        l2["Your core logic<br/>unchanged"]
+        p2 --> s2 --> l2
+        p2 --> c2 --> l2
+        p2 --> chat --> tools
+        a2 --> mcp --> tools
+        tools --> l2
+    end
+
+    before ~~~ after
+
+    classDef new fill:#dbeafe,stroke:#2563eb,color:#000
+    class chat,mcp,tools new
+```
+
+1. **Tools for AI:** a class that wraps the operations you already have, one method each, with a description for the model and a safety class (Read / Write / Execute). Here: [`TestBenchCapabilities.cs`](src/Demo.Capabilities/TestBench/TestBenchCapabilities.cs).
+2. **Chat panel:** connects to the provider with the customer's key or gateway, sends the tools with each message, and shows an approval card before anything that isn't Read. Here: [`Demo.Ai`](src/Demo.Ai) plus the panel in `Demo.Desktop`.
+3. **MCP mode:** one more command on your console tool that serves the same tools to coding agents over stdin/stdout. Here: `demo-cli mcp` in [`Demo.Cli`](src/Demo.Cli).
+
+The core logic isn't changed for AI, so its rules apply to every path.
 
 ## Walkthrough
 
