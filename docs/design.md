@@ -27,7 +27,7 @@ We ship Windows desktop tools that run **on customer machines**. We want to show
 
 | Persona | Who they are | What they want | What we give them |
 |---|---|---|---|
-| **"Just let me ask it"** | Test engineers and technicians. They don't know or care what Claude, Codex or MCP are. | Type "make a hot/cold plan from the datasheet and run it" and get it done, then ask questions about the results. | An **opt-in chat panel** in the desktop app. |
+| **"Just let me ask it"** | Engineers and technicians. They don't know or care what Claude, Codex or MCP are. | Type "make a hot/cold plan from the datasheet and run it" and get it done, then ask questions about the results. | An **opt-in chat panel** in the desktop app. |
 | **"I have my own agent"** | Engineers who already use Claude Code, Codex or Cursor. | Have their agent drive our tool as part of bigger work, e.g. "run the rev-B targets over temperature and write up what fails". | An **MCP server mode** in the console tool: `demo-cli mcp`. |
 
 Four constraints shape every decision:
@@ -70,7 +70,7 @@ There are **two programs** (`Demo.Desktop.exe` and `demo-cli.exe`) and **four wa
 
 ```mermaid
 flowchart TB
-    eng(["Test engineer"])
+    eng(["Engineer"])
     dev(["Engineer with a coding agent"])
 
     subgraph desktop["Demo.Desktop.exe: the WPF app"]

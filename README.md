@@ -19,7 +19,7 @@ Two programs, four ways in. A and B existed before AI; C and D are what this dem
 
 ```mermaid
 flowchart LR
-    eng(["Test engineer"])
+    eng(["Engineer"])
     dev(["Engineer with<br/>a coding agent"])
 
     subgraph desktop["Demo.Desktop.exe (WPF app)"]
