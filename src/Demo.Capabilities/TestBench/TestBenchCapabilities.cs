@@ -112,7 +112,7 @@ public sealed class TestBenchCapabilities(TestBenchService bench)
         [Description("Load currents in mA.")] double[]? loadCurrentsMa = null)
     {
         var plan = bench.CreatePlan(name, device, tests.Select(t => new TestLimit(t.TestId, t.Min, t.Max)),
-            temperaturesC, supplyVoltages, loadCurrentsMa, samples, "assistant");
+            temperaturesC, supplyVoltages, loadCurrentsMa, samples, "ai"); // the same tools serve the in-app chat and MCP agents
         return new { plan = PlanView(plan), xmlPath = bench.PlanPath(plan.Id) };
     }
 
@@ -149,7 +149,7 @@ public sealed class TestBenchCapabilities(TestBenchService bench)
     }
 
     [Capability("cancel_test_run", SafetyClass.Execute, Title = "Stop a run")]
-    [Description("Stops a run in progress. Measurements taken so far are kept in results.csv.")]
+    [Description("Stops a run in progress that was started by this program (the desktop app or this console-tool session); a run started elsewhere must be stopped there. Measurements taken so far are kept in results.csv.")]
     public Task<TestRun> CancelTestRun([Description("Run id, e.g. 'R-1002'.")] string runId) => bench.CancelRunAsync(runId);
 
     private static object PlanView(TestPlan p) => new
@@ -160,7 +160,7 @@ public sealed class TestBenchCapabilities(TestBenchService bench)
         p.Source,
         p.Created,
         conditions = p.Conditions.Select(c => new { c.Parameter, c.Units, c.Values }),
-        units = p.Samples,
+        samples = p.Samples, // unit (DUT) count; not "units", which tests[] uses for V, µA, ...
         tests = p.Tests.Select(t => new { t.Id, t.Name, t.Units, t.Min, t.Max }),
         measurementCount = p.MeasurementCount,
     };

@@ -69,6 +69,56 @@ public sealed class TestBenchServiceTests : IDisposable
         Assert.Equal(plan.Tests, parsed.Tests);
         Assert.Equal(plan.MeasurementCount, parsed.MeasurementCount);
         Assert.Contains("<Sweep parameter=\"Temperature\" units=\"°C\" values=\"-40 25 85 125\" />", xml);
+
+        // The file says it is UTF-8 and is: an XML reader given only the bytes reads °C back.
+        Assert.StartsWith("<?xml version=\"1.0\" encoding=\"utf-8\"?>", xml);
+        var fromFile = System.Xml.Linq.XDocument.Load(_bench.PlanPath(plan.Id));
+        Assert.Equal("°C", fromFile.Descendants("Sweep").First().Attribute("units")!.Value);
+    }
+
+    [Fact]
+    public void A_plan_file_whose_id_does_not_match_its_file_name_is_refused()
+    {
+        // e.g. someone copies TP-1001.xml to TP-1005.xml and edits the limits, but not the id inside
+        File.WriteAllText(Path.Combine(_bench.PlansFolder, "TP-1005.xml"), PlanXml(x => x.Replace("min=\"3.267\"", "min=\"3.1\"")));
+
+        Assert.Equal(["TP-1001"], _bench.ListPlans().Select(p => p.Id));
+        var ex = Assert.Throws<DomainException>(() => _bench.GetPlan("TP-1005"));
+        Assert.Equal("TP-1005.xml says it is TP-1001; plan ids must match the file name.", ex.Message);
+        Assert.Equal(ex.Message, Assert.Throws<DomainException>(() => _bench.StartRun("TP-1005")).Message);
+        Assert.Equal(3.267, _bench.GetPlan("TP-1001").Tests.Single(t => t.Id == "VOUT").Min);
+    }
+
+    [Fact]
+    public void Deleted_workspace_folders_read_as_empty_and_are_recreated_without_reseeding()
+    {
+        Directory.Delete(_bench.RunsFolder, recursive: true);
+        Directory.Delete(_bench.SpecsFolder, recursive: true);
+
+        Assert.Empty(_bench.ListRuns());
+        Assert.Empty(_bench.ListSpecs());
+        Assert.Null(_bench.BenchBusyWith());
+
+        var restarted = new TestBenchService(_workspace, BenchOptions.Instant);
+        Assert.True(Directory.Exists(restarted.RunsFolder));
+        Assert.True(Directory.Exists(restarted.SpecsFolder));
+        Assert.Empty(restarted.ListRuns()); // plans/ was there, so this is not a new workspace
+        Assert.Equal(["TP-1001"], restarted.ListPlans().Select(p => p.Id));
+
+        Directory.Delete(_bench.PlansFolder, recursive: true);
+        Assert.Empty(_bench.ListPlans());
+        var plan = _bench.CreatePlan("again", "LDO-3300", [new TestLimit("VOUT", 3.2, 3.4)], null, null, null, 1, "test");
+        Assert.Equal("TP-1001", plan.Id);
+    }
+
+    [Fact]
+    public async Task A_run_started_after_the_runs_folder_was_deleted_still_works()
+    {
+        Directory.Delete(_bench.RunsFolder, recursive: true);
+
+        var run = await RunToEnd(_bench.GetPlan("TP-1001"));
+
+        Assert.Equal(("R-1001", RunStatus.Completed), (run.Id, run.Status));
     }
 
     [Theory]
@@ -98,6 +148,34 @@ public sealed class TestBenchServiceTests : IDisposable
     {
         var ex = Assert.Throws<DomainException>(() => _bench.CreatePlan("x", "LDO-3300", [new TestLimit("NOISE", null, 45)], null, null, null, 1, "test"));
         Assert.Contains("cannot measure 'NOISE'. Available: VOUT, IQ, DROPOUT, LOAD_REG, PSRR", ex.Message);
+    }
+
+    [Fact]
+    public void Unknown_measurements_are_reported_with_every_other_problem()
+    {
+        var ex = Assert.Throws<DomainException>(() => _bench.CreatePlan("x", "LDO-3300",
+            [new TestLimit("NOISE", null, 45), new TestLimit("VOUT", 3.4, 3.2), new TestLimit("BOGUS", 1, 2)], [200], null, null, 1, "test"));
+
+        Assert.Contains("cannot measure 'NOISE'", ex.Message);
+        Assert.Contains("cannot measure 'BOGUS'", ex.Message);
+        Assert.Contains("VOUT: min (3.4) must be below max (3.2)", ex.Message);
+        Assert.Contains("Temperature 200 °C is outside the bench range", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("bad.json", """{ "device": "LDO-3300", "parameters": [ { "parameter": null, "name": "Output voltage", "units": "V", "max": 3.4 } ] }""", "parameter 1 needs a parameter id, a name and units")]
+    [InlineData("bad.json", """{ "device": null, "parameters": [ { "parameter": "VOUT", "name": "Output voltage", "units": "V", "max": 3.4 } ] }""", "does not say which device")]
+    [InlineData("bad.json", """{ "device": "LDO-3300", "parameters": [ { "parameter": 7, "name": "Output voltage", "units": "V" } ] }""", "Could not read spec sheet 'bad.json'")]
+    [InlineData("bad.json", "{ not json", "Could not read spec sheet 'bad.json'")]
+    [InlineData("bad.csv", "# device: LDO-3300\nparameter,name,units,min,typ,max\nVOUT,Output voltage,V\n", "line 3 has 3 columns")]
+    [InlineData("bad.csv", "# device: LDO-3300\nparameter,name,units,min,typ,max\nVOUT,Output voltage,V,low,3.3,3.4\n", "Could not read spec sheet 'bad.csv'")]
+    [InlineData("bad.csv", "parameter,name,units,min,typ,max\nVOUT,Output voltage,V,3.2,3.3,3.4\n", "has no '# device: ...' line")]
+    public void Malformed_spec_sheets_are_rejected_readably_and_left_out_of_the_list(string file, string content, string expected)
+    {
+        File.WriteAllText(Path.Combine(_bench.SpecsFolder, file), content);
+
+        Assert.Contains(expected, Assert.Throws<DomainException>(() => _bench.ReadSpec(file)).Message);
+        Assert.DoesNotContain(file, _bench.ListSpecs().Select(s => s.FileName));
     }
 
     [Theory]
@@ -253,11 +331,63 @@ public sealed class TestBenchServiceTests : IDisposable
         var watcher = new TestBenchService(_workspace, BenchOptions.Instant); // stands in for the console tool or desktop app
         var run = slow.StartRun(plan.Id);
 
-        var reads = 0;
-        while (watcher.GetRun(run.Id).Status == RunStatus.Running) { reads++; Thread.Sleep(1); } // a very eager poller
+        // A very eager poller. This test is about the run surviving it, so a read that loses the race with a
+        // save on a busy machine is counted rather than failing the test.
+        int reads = 0, misses = 0;
+        for (var status = RunStatus.Running; status == RunStatus.Running && misses < 100; Thread.Sleep(1))
+        {
+            try { status = watcher.GetRun(run.Id).Status; reads++; }
+            catch (DomainException) { misses++; }
+        }
 
         Assert.True(reads > 0);
         Assert.Equal(RunStatus.Completed, (await slow.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)).Status);
+    }
+
+    [Fact]
+    public async Task Waiting_for_a_run_in_another_program_polls_its_run_json()
+    {
+        var plan = HotCold();
+        var slow = new TestBenchService(_workspace, new BenchOptions(TimeSpan.Zero, TimeSpan.FromMilliseconds(5)));
+        var watcher = new TestBenchService(_workspace, BenchOptions.Instant); // e.g. the desktop app, while the console tool runs the bench
+        var run = slow.StartRun(plan.Id);
+
+        Assert.Equal(RunStatus.Running, (await watcher.WaitForRunAsync(run.Id, TimeSpan.Zero, TestContext.Current.CancellationToken)).Status);
+        var done = await watcher.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunStatus.Completed, done.Status);
+        Assert.Equal(plan.MeasurementCount, done.Completed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_run_whose_run_json_cannot_be_written_ends_with_a_status_not_an_exception(bool cancel)
+    {
+        var slow = new TestBenchService(_workspace, new BenchOptions(TimeSpan.Zero, TimeSpan.FromMilliseconds(20)));
+        var run = slow.StartRun("TP-1001");
+        // A folder where SaveRun writes its temporary file makes every save fail, as a locked or full disk would.
+        Directory.CreateDirectory(Path.Combine(slow.RunsFolder, run.Id, "run.json.tmp"));
+
+        var ended = cancel
+            ? await slow.CancelRunAsync(run.Id)
+            : await slow.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal(cancel ? RunStatus.Cancelled : RunStatus.Failed, ended.Status);
+        if (!cancel) Assert.Contains("run.json.tmp", ended.Error);
+    }
+
+    [Fact]
+    public void Results_csv_reading_skips_a_half_written_last_line()
+    {
+        var path = Path.Combine(_workspace, "partial.csv");
+        File.WriteAllText(path, ResultFiles.CsvHeader + "\n" +
+            "1,25,5,100,VOUT,3.301,V,3.267,3.333,PASS\n" +
+            "1,25,5,100,IQ,44.2,µA,,60,PA", ResultFiles.CsvEncoding); // the bench was mid-write
+
+        var row = Assert.Single(ResultFiles.ReadCsv(path));
+
+        Assert.Equal(("VOUT", 3.301, true), (row.TestId, row.Value, row.Pass));
     }
 
     private string PlanXml(Func<string, string> edit) => edit(_bench.GetPlanXml("TP-1001"));

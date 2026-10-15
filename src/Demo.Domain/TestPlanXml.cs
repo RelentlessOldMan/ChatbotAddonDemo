@@ -23,6 +23,7 @@ public static class TestPlanXml
     public static string ToXml(TestPlan plan)
     {
         var doc = new XDocument(
+            new XDeclaration("1.0", "utf-8", null), // the workspace writes plan files as UTF-8 (no BOM)
             new XElement("TestPlan",
                 new XAttribute("id", plan.Id),
                 new XAttribute("name", plan.Name),
@@ -42,7 +43,8 @@ public static class TestPlanXml
                         new XAttribute("units", t.Units),
                         t.Min is { } min ? new XAttribute("min", min.ToString(Inv)) : null,
                         t.Max is { } max ? new XAttribute("max", max.ToString(Inv)) : null)))));
-        return doc.Declaration + doc.ToString() + Environment.NewLine;
+        // XDocument.ToString() leaves the declaration out, so it is written here.
+        return doc.Declaration + Environment.NewLine + doc.ToString() + Environment.NewLine;
     }
 
     /// <summary>Parses and fully validates plan XML (schema, then bench rules). Any problem is a <see cref="DomainException"/>.</summary>

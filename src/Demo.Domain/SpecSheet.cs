@@ -44,8 +44,10 @@ public sealed record SpecSheet(string FileName, string Device, IReadOnlyList<Spe
         string? device = null;
         var rows = new List<SpecParameter>();
         var headerSeen = false;
+        var number = 0;
         foreach (var raw in lines)
         {
+            number++;
             var line = raw.Trim();
             if (line.Length == 0) continue;
             if (line.StartsWith('#'))
@@ -56,6 +58,8 @@ public sealed record SpecSheet(string FileName, string Device, IReadOnlyList<Spe
             }
             if (!headerSeen) { headerSeen = true; continue; }
             var f = line.Split(',');
+            if (f.Length < 6)
+                throw new DomainException($"'{fileName}' line {number} has {f.Length} columns; expected parameter,name,units,min,typ,max.");
             rows.Add(new SpecParameter(f[0].Trim(), f[1].Trim(), f[2].Trim(), Number(f[3]), Number(f[4]), Number(f[5])));
         }
         return Checked(new SpecSheet(fileName, device ?? throw new DomainException($"'{fileName}' has no '# device: ...' line."), rows));
@@ -67,19 +71,28 @@ public sealed record SpecSheet(string FileName, string Device, IReadOnlyList<Spe
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         double? Num(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
+        // "parameter": null reads as missing (Checked says so); a number where text belongs throws, and Load reports it.
+        string Text(JsonElement e, string name) => e.GetProperty(name).GetString() ?? "";
         return Checked(new SpecSheet(
             fileName,
-            root.GetProperty("device").GetString()!,
+            Text(root, "device"),
             root.GetProperty("parameters").EnumerateArray().Select(p => new SpecParameter(
-                p.GetProperty("parameter").GetString()!,
-                p.GetProperty("name").GetString()!,
-                p.GetProperty("units").GetString()!,
+                Text(p, "parameter"),
+                Text(p, "name"),
+                Text(p, "units"),
                 Num(p, "min"), Num(p, "typ"), Num(p, "max"))).ToList()));
     }
 
     private static double? Number(string text) =>
         string.IsNullOrWhiteSpace(text) ? null : double.Parse(text.Trim(), Inv);
 
-    private static SpecSheet Checked(SpecSheet sheet) =>
-        sheet.Parameters.Count == 0 ? throw new DomainException($"'{sheet.FileName}' lists no parameters.") : sheet;
+    private static SpecSheet Checked(SpecSheet sheet)
+    {
+        if (string.IsNullOrWhiteSpace(sheet.Device)) throw new DomainException($"'{sheet.FileName}' does not say which device it is for.");
+        if (sheet.Parameters.Count == 0) throw new DomainException($"'{sheet.FileName}' lists no parameters.");
+        foreach (var (p, row) in sheet.Parameters.Select((p, i) => (p, i + 1)))
+            if (string.IsNullOrWhiteSpace(p.Parameter) || string.IsNullOrWhiteSpace(p.Name) || string.IsNullOrWhiteSpace(p.Units))
+                throw new DomainException($"'{sheet.FileName}' parameter {row} needs a parameter id, a name and units.");
+        return sheet;
+    }
 }

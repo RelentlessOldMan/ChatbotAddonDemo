@@ -76,7 +76,7 @@ public sealed class CapabilityCatalog
 
     /// <summary>
     /// Business-rule violations are normal outcomes the model should read and react to
-    /// ("WO-9 does not exist"), so they come back as <c>{"error": "..."}</c> results.
+    /// ("TP-9999 does not exist"), so they come back as <c>{"error": "..."}</c> results.
     /// Unexpected exceptions still propagate and are reported generically.
     /// </summary>
     private sealed class DomainErrorsAsResults(AIFunction inner) : DelegatingAIFunction(inner)

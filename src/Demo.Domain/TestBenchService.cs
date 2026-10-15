@@ -37,7 +37,10 @@ public sealed class TestBenchService
         Workspace = Path.GetFullPath(workspace);
         Options = options ?? BenchOptions.Demo;
         _time = time ?? TimeProvider.System;
-        if (!Directory.Exists(PlansFolder)) Seed();
+        // A missing plans folder means a new workspace, so it gets the examples. A folder deleted later is just recreated empty.
+        var isNew = !Directory.Exists(PlansFolder);
+        foreach (var folder in new[] { SpecsFolder, PlansFolder, RunsFolder }) Directory.CreateDirectory(folder);
+        if (isNew) Seed();
     }
 
     public string Workspace { get; }
@@ -71,9 +74,9 @@ public sealed class TestBenchService
     // ---- Test plans ----------------------------------------------------------------------------
 
     public IReadOnlyList<TestPlan> ListPlans() =>
-        Directory.EnumerateFiles(PlansFolder, "TP-*.xml").Select(TryLoadPlan).OfType<TestPlan>().OrderBy(p => IdNumber(p.Id)).ToList();
+        PlanFiles().Select(TryLoadPlan).OfType<TestPlan>().OrderBy(p => IdNumber(p.Id)).ToList();
 
-    public TestPlan GetPlan(string planId) => TestPlanXml.Parse(File.ReadAllText(PlanPath(planId)));
+    public TestPlan GetPlan(string planId) => LoadPlan(PlanPath(planId));
 
     public string GetPlanXml(string planId) => File.ReadAllText(PlanPath(planId));
 
@@ -87,11 +90,11 @@ public sealed class TestBenchService
     public TestPlan CreatePlan(string name, string device, IEnumerable<TestLimit> tests,
         IEnumerable<double>? temperaturesC, IEnumerable<double>? supplyVoltages, IEnumerable<double>? loadCurrentsMa, int samples, string source)
     {
+        // An unknown test id is kept for Validate to report, so every problem is listed at once.
         var planned = tests.Select(t =>
-        {
-            var m = Bench.Measurement(t.TestId);
-            return new PlannedTest(m.Id, m.Name, m.Units, t.Min, t.Max);
-        }).ToList();
+            Bench.Measurements.FirstOrDefault(m => string.Equals(m.Id, t.TestId, StringComparison.OrdinalIgnoreCase)) is { } m
+                ? new PlannedTest(m.Id, m.Name, m.Units, t.Min, t.Max)
+                : new PlannedTest(t.TestId ?? "", t.TestId ?? "", "", t.Min, t.Max)).ToList();
         return Save(new TestPlan("", name.Trim(), device.Trim(), _time.GetLocalNow(), source,
             Conditions(temperaturesC, supplyVoltages, loadCurrentsMa), samples, planned));
     }
@@ -128,8 +131,8 @@ public sealed class TestBenchService
     // ---- Runs ----------------------------------------------------------------------------------
 
     public IReadOnlyList<TestRun> ListRuns(string? planId = null) =>
-        Directory.EnumerateDirectories(RunsFolder, "R-*")
-            .Select(d => TryLoadRun(Path.GetFileName(d)))
+        RunFolderNames()
+            .Select(TryLoadRun)
             .OfType<TestRun>()
             .Where(r => planId is null || string.Equals(r.PlanId, planId, StringComparison.OrdinalIgnoreCase))
             .OrderBy(r => IdNumber(r.Id))
@@ -139,8 +142,9 @@ public sealed class TestBenchService
         TryLoadRun(RunId(runId)) ?? throw new DomainException($"Test run '{runId}' does not exist.");
 
     /// <summary>The run currently using the bench, from this process or another one (e.g. the console tool).</summary>
+    /// <remarks>A run of ours that has finished measuring and is only writing its summary and plots doesn't count.</remarks>
     public TestRun? BenchBusyWith() =>
-        _active?.Snapshot() ?? ListRuns().FirstOrDefault(r => r.Status == RunStatus.Running);
+        _active?.Snapshot() is { Status: RunStatus.Running } mine ? mine : ListRuns().FirstOrDefault(r => r.Status == RunStatus.Running);
 
     /// <summary>Starts a plan on the bench and returns at once. One run at a time: the bench is a single physical station.</summary>
     public TestRun StartRun(string planId)
@@ -157,7 +161,7 @@ public sealed class TestBenchService
             TestRun run;
             do
             {
-                var id = $"R-{NextNumber(Directory.EnumerateDirectories(RunsFolder, "R-*").Select(Path.GetFileName)!)}";
+                var id = $"R-{NextNumber(RunFolderNames())}";
                 Directory.CreateDirectory(RunFolder(id));
                 var now = _time.GetLocalNow();
                 run = new TestRun(id, plan.Id, plan.Name, plan.Device, RunStatus.Running, now, null, plan.MeasurementCount, 0, 0, now);
@@ -180,9 +184,14 @@ public sealed class TestBenchService
         var active = _active;
         if (active is not null && string.Equals(active.Snapshot().Id, runId, StringComparison.OrdinalIgnoreCase))
         {
-            try { await active.Task!.WaitAsync(timeout, _time, cancellationToken); }
-            catch (TimeoutException) { }
-            return active.Task!.IsCompleted ? GetRun(runId) : active.Snapshot();
+            // WhenAny never throws, so however the run ended, the caller gets its status rather than an exception.
+            using (var stopTimer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                await Task.WhenAny(active.Task!, Task.Delay(timeout, _time, stopTimer.Token));
+                await stopTimer.CancelAsync();
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return active.Snapshot(); // the final status, even if run.json could not be written
         }
 
         // Running in another process: poll its run.json.
@@ -207,8 +216,8 @@ public sealed class TestBenchService
                 : $"{run.Id} is not running (it is {run.Status}).");
         }
         await active.Cancellation.CancelAsync();
-        try { await active.Task!; } catch (OperationCanceledException) { }
-        return GetRun(runId);
+        await active.Task!.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return active.Snapshot();
     }
 
     // ---- Results and analysis -------------------------------------------------------------------
@@ -302,15 +311,15 @@ public sealed class TestBenchService
             var finished = active.Finish(RunStatus.Completed, _time.GetLocalNow());
             ResultFiles.WriteSummaryCsv(RunAnalyzer.Analyze(finished, plan, rows, MeasurementFilter.All), Path.Combine(RunFolder(id), "summary.csv"));
             ResultFiles.WritePlots(plan, rows, Path.Combine(RunFolder(id), "plots"));
-            SaveRun(finished);
+            SaveRun(finished); // if this fails, the run is marked Failed below, with the reason
         }
         catch (OperationCanceledException)
         {
-            SaveRun(active.Finish(RunStatus.Cancelled, _time.GetLocalNow()));
+            TrySaveRun(active.Finish(RunStatus.Cancelled, _time.GetLocalNow()));
         }
         catch (Exception ex)
         {
-            SaveRun(active.Finish(RunStatus.Failed, _time.GetLocalNow(), ex.Message));
+            TrySaveRun(active.Finish(RunStatus.Failed, _time.GetLocalNow(), ex.Message));
         }
         finally
         {
@@ -326,8 +335,9 @@ public sealed class TestBenchService
         lock (_gate)
         {
             TestPlanXml.Validate(draft);
+            Directory.CreateDirectory(PlansFolder); // in case it was deleted since start-up
             TestPlan plan;
-            do plan = draft with { Id = $"TP-{NextNumber(Directory.EnumerateFiles(PlansFolder, "TP-*.xml").Select(Path.GetFileNameWithoutExtension)!)}" };
+            do plan = draft with { Id = $"TP-{NextNumber(PlanFiles().Select(Path.GetFileNameWithoutExtension)!)}" };
             while (!TryCreateFile(Path.Combine(PlansFolder, plan.Id + ".xml"), TestPlanXml.ToXml(plan))); // another program took that id
             RaiseChanged();
             return plan;
@@ -388,7 +398,8 @@ public sealed class TestBenchService
     }
 
     // Shares everything, so a read never blocks the bench more than Windows insists on (it still won't let
-    // File.Move replace an open file; SaveRun retries for that). Retries the moment of the swap itself.
+    // File.Move replace an open file; SaveRun retries for that). Retries the moment of the swap itself, for about
+    // a quarter of a second, so on a busy machine a run being saved doesn't briefly look like it doesn't exist.
     private static string ReadShared(string path)
     {
         for (var attempt = 1; ; attempt++)
@@ -398,7 +409,7 @@ public sealed class TestBenchService
                 using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
                 return reader.ReadToEnd();
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 4) { Thread.Sleep(10 * attempt); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 8) { Thread.Sleep(Math.Min(10 * attempt, 50)); }
         }
     }
 
@@ -414,6 +425,13 @@ public sealed class TestBenchService
             try { File.Move(temp, path, overwrite: true); return; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 25) { Thread.Sleep(Math.Min(5 * attempt, 50)); }
         }
+    }
+
+    /// <summary>The save after a run has already gone wrong: there is nobody left to report a second failure to.</summary>
+    private void TrySaveRun(TestRun run)
+    {
+        try { SaveRun(run); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>Writes a new file all at once, or returns false if the file already exists (e.g. another program just created it).</summary>
@@ -433,17 +451,36 @@ public sealed class TestBenchService
         }
     }
 
-    private TestPlan? TryLoadPlan(string path)
+    /// <summary>
+    /// The file name is the plan's id everywhere else (PlanPath, new ids), so a copied file that still has the
+    /// old id inside would otherwise show up as the old plan, and runs of it would record the wrong plan.
+    /// </summary>
+    private static TestPlan LoadPlan(string path)
     {
-        try { return TestPlanXml.Parse(File.ReadAllText(path)); }
+        var plan = TestPlanXml.Parse(File.ReadAllText(path));
+        return string.Equals(plan.Id, Path.GetFileNameWithoutExtension(path), StringComparison.OrdinalIgnoreCase)
+            ? plan
+            : throw new DomainException($"{Path.GetFileName(path)} says it is {plan.Id}; plan ids must match the file name.");
+    }
+
+    private static TestPlan? TryLoadPlan(string path)
+    {
+        try { return LoadPlan(path); }
         catch (Exception ex) when (ex is DomainException or IOException or UnauthorizedAccessException) { return null; }
     }
 
     private static SpecSheet? TryLoadSpec(string path)
     {
         try { return SpecSheet.Load(path); }
-        catch (Exception ex) when (ex is DomainException or IOException) { return null; }
+        catch (Exception ex) when (ex is DomainException or IOException or UnauthorizedAccessException) { return null; }
     }
+
+    // A folder deleted while the program runs reads as empty rather than as an error.
+    private IEnumerable<string> PlanFiles() =>
+        Directory.Exists(PlansFolder) ? Directory.EnumerateFiles(PlansFolder, "TP-*.xml") : [];
+
+    private IEnumerable<string> RunFolderNames() =>
+        Directory.Exists(RunsFolder) ? Directory.EnumerateDirectories(RunsFolder, "R-*").Select(d => Path.GetFileName(d)) : [];
 
     private static int IdNumber(string id) => int.TryParse(id.AsSpan(id.IndexOf('-') + 1), Inv, out var n) ? n : 0;
 

@@ -92,6 +92,24 @@ public sealed class CapabilityCatalogTests : IDisposable
     }
 
     [Fact]
+    public async Task Plans_made_by_ai_say_so_and_give_the_unit_count_as_samples()
+    {
+        var created = await Invoke("create_test_plan", new AIFunctionArguments
+        {
+            ["name"] = "quick",
+            ["device"] = "LDO-3300",
+            ["tests"] = new[] { new TestLimitArgument("IQ", Max: 60) },
+            ["samples"] = 2,
+        });
+
+        var plan = created.GetProperty("plan");
+        Assert.Equal("ai", plan.GetProperty("source").GetString());
+        Assert.Equal(2, plan.GetProperty("samples").GetInt32());
+        Assert.False(plan.TryGetProperty("units", out _)); // "units" means V, µA, ... in tests[]
+        Assert.Equal("µA", plan.GetProperty("tests")[0].GetProperty("units").GetString());
+    }
+
+    [Fact]
     public async Task Query_results_are_capped_but_report_the_total()
     {
         var result = await Invoke("query_measurements", new AIFunctionArguments { ["runId"] = "R-1001", ["maxRows"] = 5 });
