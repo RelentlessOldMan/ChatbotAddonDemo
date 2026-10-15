@@ -66,6 +66,7 @@ flowchart LR
     classDef paid fill:#fff1c2,stroke:#d97706,color:#000
     class llm,agentllm paid
 ```
+<sub>[Download this diagram as PNG](docs/images/diagrams/readme--how-it-works.png)</sub> <!-- diagram-png -->
 
 **💲 marks every place tokens are spent.** Thick arrows are model calls; everything else is ordinary local code and file access.
 
@@ -141,6 +142,7 @@ flowchart TB
     classDef new fill:#dbeafe,stroke:#2563eb,color:#000
     class chat,mcp,tools new
 ```
+<sub>[Download this diagram as PNG](docs/images/diagrams/readme--applying-this-to-your-own-tool.png)</sub> <!-- diagram-png -->
 
 1. **Tools for AI:** a class that wraps the operations you already have, one method each, with a description for the model and a safety class (Read / Write / Execute). Here: [`TestBenchCapabilities.cs`](src/Demo.Capabilities/TestBench/TestBenchCapabilities.cs).
 2. **Chat panel:** connects to the provider with the customer's key or gateway, sends the tools with each message, and shows an approval card before anything that isn't Read. Here: [`Demo.Ai`](src/Demo.Ai) plus the panel in `Demo.Desktop`.
@@ -209,6 +211,9 @@ dotnet test ChatbotAddonDemo.sln
 
 # 💲 Paid live-API smoke tests (one short chat, a few requests, per provider), only when you explicitly opt in
 $env:DEMO_LIVE_TESTS = '1'; dotnet test --filter Category=Live
+
+# Re-render every diagram to PNG (docs/images/diagrams) after editing one. Needs Node.js and Chrome or Edge; headless.
+node scripts/render-diagrams.mjs
 
 # Regenerate every screenshot in docs/images
 .\scripts\capture-screenshots.ps1

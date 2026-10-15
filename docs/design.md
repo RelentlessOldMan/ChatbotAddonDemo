@@ -50,6 +50,7 @@ flowchart LR
     analysis["⑤ Analysis<br/>verdict + key findings:<br/>failures, near-limit results, drift"]
     spec --> plan --> run --> files --> analysis
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--the-pretend-legacy-tool-testbench.png)</sub> <!-- diagram-png -->
 
 All state is **plain files in a workspace folder**, which is how real tools of this kind tend to work:
 
@@ -121,6 +122,7 @@ flowchart TB
     classDef paid fill:#fff1c2,stroke:#d97706,color:#000
     class llm,agentllm paid
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--who-calls-what-the-runtime-picture.png)</sub> <!-- diagram-png -->
 
 **💲 marks every place tokens are spent.** The thick arrows are calls to a model; every other arrow is ordinary local code, process start-up or file access, and costs nothing.
 
@@ -240,6 +242,7 @@ sequenceDiagram
     M-->>P: 💲 answer in plain words
     P-->>U: "R-1002 is done: 2 failed … every failure is DUT 3 …" + tokens used and est. cost
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--one-conversation-step-by-step.png)</sub> <!-- diagram-png -->
 
 **This one message costs 6 billed requests** (6 request/reply pairs). Each one resends the system prompt, the tool definitions and the conversation so far, so later requests have more input tokens than earlier ones. The demo script reports illustrative counts of about 21,000 input and 450 output tokens for this message: roughly $0.09 at Claude Opus 5.5 prices, or $0.05 at Sonnet 5.5 prices. Real counts depend on the model and the conversation. The waiting, the bench run and the analysis cost nothing; they happen in our code.
 
@@ -270,6 +273,7 @@ flowchart TD
     classDef paid fill:#fff1c2,stroke:#d97706,color:#000
     class send paid
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--one-conversation-step-by-step-2.png)</sub> <!-- diagram-png -->
 
 - The model never runs anything. It can only reply with words or with a request to run a tool; our code decides what happens next.
 - A Read tool asked for in the same reply as a change is shown on that change's approval card ("The assistant wants to look something up") rather than run silently.
@@ -300,6 +304,7 @@ flowchart TD
     user -- no --> prompt["Show 'Connect an AI provider' card<br/>no network call made"]
     dis -- "yes: skip personal keys" --> prompt
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--credentials-the-customer-pays.png)</sub> <!-- diagram-png -->
 
 Read it top to bottom. The app uses the first source that is configured:
 
@@ -357,6 +362,7 @@ sequenceDiagram
     Note over A,S: session ends → the process exits
     Note over S,B: demo-cli never calls a model and needs no key
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--path-d-in-detail-coding-agents.png)</sub> <!-- diagram-png -->
 
 - **No key in our tool, and no tokens on our side.** Every 💲 arrow is between the agent and its own model, on the agent user's subscription or API key; as in §6.1, a 💲 request and its reply are one billed request. Our tool results become part of the agent's conversation, so they go to the agent's AI provider under the agent user's terms. The MCP traffic between the agent and `demo-cli` is free local I/O.
 - **What the agent may do is set by whoever configures it.** `demo-cli mcp` alone exposes only Read tools; `--allow-writes` adds the Write tools (plans and reports); `--allow-runs` adds the Execute tools (the bench). The agent's own permission prompts also apply, using the tool annotations.
@@ -418,6 +424,8 @@ The UI tests and the screenshot tool open the app **off-screen, without activati
 3. Runs real `demo-cli` commands and a real MCP session, and renders their output as terminal-style images.
 4. Copies one real output plot from the run.
 
+The diagrams are Mermaid text, which GitHub draws in the browser. `node scripts/render-diagrams.mjs` renders each one to `docs/images/diagrams` (headless Chrome or Edge) and keeps the "Download this diagram as PNG" link under it, for pasting into slides or documents. Run it after editing a diagram.
+
 ## 13. Build dependencies (compile time, not runtime)
 
 This shows **which project references which library** when building. It is *not* a picture of calls at runtime; §3 is.
@@ -434,6 +442,7 @@ flowchart BT
     desk --> ai
     cli --> caps
 ```
+<sub>[Download this diagram as PNG](images/diagrams/design--build-dependencies-compile-time-not-runtime.png)</sub> <!-- diagram-png -->
 
 Arrows point from a project to the library it uses. The console tool has no path to `Demo.Ai`, which is how you can tell it never calls a model.
 

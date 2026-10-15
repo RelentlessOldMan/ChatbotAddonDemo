@@ -65,6 +65,7 @@ flowchart LR
     classDef paid fill:#fff1c2,stroke:#d97706,color:#000
     class prov,agentprov paid
 ```
+<sub>[Download this diagram as PNG](images/diagrams/security--data-leaving-the-pc.png)</sub> <!-- diagram-png -->
 
 Thick arrows are the only traffic that leaves the PC. Paths A and B send nothing anywhere.
 
