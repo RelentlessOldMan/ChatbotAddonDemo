@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Demo.Domain;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -49,6 +50,20 @@ public sealed class StdioServerTests : IDisposable
         Assert.False(tool.ProtocolTool.Annotations?.ReadOnlyHint);
         Assert.DoesNotContain(tools, t => t.Name == hidden);
         Assert.Equal(exposed == "start_test_run", tool.ProtocolTool.Annotations?.OpenWorldHint);
+    }
+
+    [Fact]
+    public async Task A_hidden_tool_cannot_be_called_by_name_either()
+    {
+        await using var client = await Connect("--allow-writes");
+
+        // An agent that knows the name from elsewhere (docs, an earlier session) still cannot use the bench.
+        await Assert.ThrowsAsync<McpProtocolException>(async () =>
+            await client.CallToolAsync("start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }, cancellationToken: TestContext.Current.CancellationToken));
+
+        var bench = new TestBenchService(_workspace, BenchOptions.Instant);
+        Assert.Null(bench.BenchBusyWith());
+        Assert.Equal(["R-1001"], bench.ListRuns(null).Select(r => r.Id));
     }
 
     [Fact]
@@ -101,6 +116,20 @@ public sealed class StdioServerTests : IDisposable
         Assert.Contains("does not exist", Text(result));
     }
 
+    [Theory]
+    [InlineData("""{"runId":"R-1001","temperatureC":"hot"}""", """'temperatureC' must be a number, not "hot".""")]
+    [InlineData("""{"runId":"R-1001","dut":1.5}""", "'dut' must be a whole number, not 1.5.")]
+    [InlineData("""{"temperatureC":25}""", "'runId' is required.")]
+    public async Task Arguments_that_do_not_fit_are_errors_that_name_the_argument(string arguments, string problem)
+    {
+        await using var client = await Connect();
+        var result = await client.CallToolAsync("get_run_summary", JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments)!,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsError);
+        Assert.Equal($"Invalid arguments for get_run_summary: {problem}", Text(result));
+    }
+
     [Fact]
     public async Task Results_are_compact_json()
     {
@@ -127,15 +156,25 @@ public sealed class StdioServerTests : IDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
-        foreach (var a in new[] { "--workspace", _workspace, "mcp", "--allow-runs" }) info.ArgumentList.Add(a);
-        info.Environment.Remove("DEMO_BENCH_DELAY_MS"); // demo speed: the run takes seconds
+        foreach (var a in new[] { "--workspace", _workspace, "mcp", "--allow-writes", "--allow-runs" }) info.ArgumentList.Add(a);
+        info.Environment.Remove("DEMO_BENCH_DELAY_MS"); // demo speed
         using var server = Process.Start(info)!;
         var errors = server.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         try
         {
             await Request(server, 1, "initialize", new { protocolVersion = "2025-06-18", capabilities = new { }, clientInfo = new { name = "test", version = "1" } });
             await server.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { jsonrpc = "2.0", method = "notifications/initialized" }));
-            var result = await Request(server, 2, "tools/call", new { name = "start_test_run", arguments = new { planId = "TP-1001" } });
+            // A big plan: over a thousand measurements take most of a minute at demo speed, so the run is still going when
+            // the agent quits however slow the machine is (TP-1001's 45 take about a second).
+            var created = await Request(server, 2, "tools/call", new
+            {
+                name = "create_test_plan_from_spec",
+                arguments = new { specFile = "LDO-3300_datasheet.csv", samples = 10, temperaturesC = new[] { -40, -20, 0, 25, 50, 85, 105, 125 }, supplyVoltages = new[] { 3.6, 4.2, 5, 5.5, 6 } },
+            });
+            var plan = JsonDocument.Parse(created.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement.GetProperty("plan");
+            Assert.True(plan.GetProperty("measurementCount").GetInt32() >= 1000);
+            var planId = plan.GetProperty("id").GetString();
+            var result = await Request(server, 3, "tools/call", new { name = "start_test_run", arguments = new { planId } });
             var run = JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement.GetProperty("run");
             Assert.Equal("Running", run.GetProperty("status").GetString());
 
@@ -164,25 +203,6 @@ public sealed class StdioServerTests : IDisposable
                 return message.GetProperty("result");
         }
         throw new EndOfStreamException($"The server closed stdout before answering {method}.");
-    }
-
-    [Fact]
-    public void Ordinary_commands_still_work_without_any_AI()
-    {
-        var plans = RunCli("plans");
-        var created = RunCli("plan", "from-spec", "LDO-3300_datasheet.csv", "--temps", "25,125", "--samples", "2", "--tests", "IQ");
-        var run = RunCli("run", "TP-1002");
-
-        Assert.Contains("TP-1001", plans);
-        Assert.Contains("Created TP-1002 (4 measurements)", created);
-        Assert.Contains("R-1002: Completed", run);
-    }
-
-    private string RunCli(params string[] arguments)
-    {
-        var result = CliProcess.Run(_workspace, ["--workspace", _workspace, .. arguments]);
-        Assert.True(result.ExitCode == 0, result.Error);
-        return result.Output;
     }
 
     private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));

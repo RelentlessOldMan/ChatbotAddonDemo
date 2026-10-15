@@ -114,7 +114,12 @@ public sealed class DesktopDriver : IDisposable
     public void Dispose()
     {
         try { Main.Close(); } catch { /* already gone */ }
-        try { if (!Process.GetProcessById(_app.ProcessId).WaitForExit(3000)) _app.Kill(); } catch { /* already gone */ }
+        try
+        {
+            using var process = Process.GetProcessById(_app.ProcessId);
+            if (!process.WaitForExit(3000)) _app.Kill();
+        }
+        catch { /* already gone */ }
         _app.Dispose();
         _automation.Dispose();
     }

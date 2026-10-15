@@ -1,9 +1,7 @@
-using System.Reflection;
 using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
 using Demo.Cli;
 using Demo.Domain;
-using ModelContextProtocol.Protocol;
 
 // demo-cli: the "legacy" console tool for scripted and batch work. Ordinary commands call the
 // domain directly, exactly as before AI existed. `demo-cli mcp` turns the same process into an MCP
@@ -60,11 +58,11 @@ try
             return 0;
 
         case "plan" when p.Count >= 2 && p[1] == "from-spec":
-            line.Expect("plan from-spec <spec-file> --temps ... --supplies ... [--loads ...] [--samples N] [--tests X,Y] [--name <text>]", 3,
+            line.Expect("plan from-spec <spec-file> [--temps ...] [--supplies ...] [--loads ...] [--samples N] [--tests X,Y] [--name <text>]", 3,
                 "--name", "--temps", "--supplies", "--loads", "--samples", "--tests");
             var made = Bench().CreatePlanFromSpec(p[2], line.Text("--name"),
                 line.Numbers("--temps"), line.Numbers("--supplies"), line.Numbers("--loads"),
-                line.WholeNumber("--samples") ?? 3, line.Text("--tests")?.Split(','));
+                line.WholeNumber("--samples") ?? 3, line.List("--tests"));
             Console.WriteLine($"Created {made.Plan.Id} ({made.Plan.MeasurementCount} measurements): {Bench().PlanPath(made.Plan.Id)}");
             if (made.SkippedParameters.Count > 0) Console.WriteLine($"Skipped (bench cannot measure): {string.Join(", ", made.SkippedParameters)}");
             return 0;
@@ -99,6 +97,9 @@ try
         case "query":
             line.Expect("query <R-id> [--test X] [--temp C] [--supply V] [--dut N] [--failed]", 2, "--test", "--temp", "--supply", "--dut", "--failed");
             var rows = Bench().GetMeasurements(p[1], Filter(line) with { FailedOnly = line.Flag("--failed") });
+            // Conditions that match nothing are an error, as for summary (and with the same message: what the run does have).
+            // A run with no failures is an answer, though: `--failed` alone may print just the header.
+            if (rows.Count == 0) Bench().Analyze(p[1], Filter(line));
             Console.WriteLine(ResultFiles.CsvHeader);
             foreach (var m in rows) Console.WriteLine(ResultFiles.ToCsvLine(m));
             return 0;
@@ -113,9 +114,8 @@ try
             var policy = new McpExposurePolicy(AllowWrites: line.Flag("--allow-writes"), AllowRuns: line.Flag("--allow-runs"));
             var bench = Bench();
             var catalog = CapabilityCatalog.FromObject(new TestBenchCapabilities(bench));
-            var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
             // When the agent disconnects (or Ctrl+C), a run it started is cancelled rather than abandoned.
-            await StdioMcpHost.RunAsync(catalog, policy, new Implementation { Name = McpClientConfig.ServerName, Version = version }, TestBenchCapabilities.Instructions,
+            await StdioMcpHost.RunAsync(catalog, policy, TestBenchCapabilities.Instructions,
                 onStopping: () => RunShutdown.CancelActiveRunAsync(bench, RunShutdown.Grace));
             return 0;
 
@@ -190,12 +190,16 @@ static void PrintHelp() => Console.WriteLine(
 
     Usage: demo-cli [--workspace <folder>] <command>
 
+    The workspace is --workspace, else the DEMO_WORKSPACE environment variable, else
+    %LOCALAPPDATA%\ChatbotAddonDemo\workspace (created with examples on first use).
+
       specs                              List spec sheets (design files) in the workspace
       plans                              List test plans
       plan show <TP-id>                  Print a plan's XML
-      plan from-spec <spec-file> --temps -40,25,125 --supplies 3.6,5 [--loads 100]
+      plan from-spec <spec-file> [--temps -40,25,125] [--supplies 3.6,5] [--loads 100]
                      [--samples 3] [--tests IQ,VOUT] [--name <text>]
                                          Create a plan with limits copied from a spec sheet
+                                         (conditions left out: 25 °C, 5 V, 100 mA)
       plan import <file.xml>             Validate and add a plan written elsewhere
       run <TP-id>                        Run a plan on the bench and print the findings (Ctrl+C cancels the run)
       runs [--plan <TP-id>]              List runs

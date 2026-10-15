@@ -12,7 +12,7 @@ namespace Demo.Desktop.UiTests;
 [Collection("Desktop")]
 public sealed class DesktopAppTests : IDisposable
 {
-    // Must match FirstQuestion in the app (the scripted assistant ignores the wording, but screenshots show it).
+    // Any wording works: the scripted assistant ignores it. Kept in step with DemoScript.FirstQuestion and the screenshot tool for realism.
     private const string FirstQuestion =
         "Make a hot/cold plan for the LDO-3300 from its datasheet: -40, 25, 85 and 125 °C at 3.6 V and 5 V, 3 units. Then run it and tell me what you find.";
 
@@ -133,5 +133,7 @@ public sealed class DesktopAppTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_profile, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        // The shared parent too, once the last test has emptied it.
+        try { Directory.Delete(Path.GetDirectoryName(_profile)!); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Demo.Capabilities;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Protocol;
@@ -11,22 +12,12 @@ namespace Demo.Cli;
 /// </summary>
 public sealed record McpExposurePolicy(bool AllowWrites, bool AllowRuns)
 {
-    public static readonly McpExposurePolicy ReadOnly = new(AllowWrites: false, AllowRuns: false);
-
     public bool Exposes(Capability capability) => capability.Safety switch
     {
         SafetyClass.Read => true,
         SafetyClass.Write => AllowWrites,
         SafetyClass.Execute => AllowRuns,
         _ => false,
-    };
-
-    public string Describe() => (AllowWrites, AllowRuns) switch
-    {
-        (false, false) => "read-only",
-        (true, false) => "read + write files",
-        (false, true) => "read + run the bench",
-        _ => "read + write files + run the bench",
     };
 }
 
@@ -60,14 +51,73 @@ public static class McpToolAdapter
     /// <summary>
     /// The catalog reports business-rule violations as <see cref="CapabilityError"/> results (readable by a chat
     /// model); MCP has a dedicated channel for that, so they become <c>isError</c> results with the message as text.
+    /// So do arguments that don't fit the tool (a missing runId, "hot" for a temperature), naming the argument so the
+    /// agent can fix its call. Any other exception still gets the SDK's generic message: no internals leak out.
     /// </summary>
     private sealed class ErrorsAsToolErrors(AIFunction inner) : DelegatingAIFunction(inner)
     {
-        protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken) =>
-            await base.InvokeCoreAsync(arguments, cancellationToken) switch
+        protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            object? result;
+            try
             {
-                CapabilityError error => new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = error.Error }] },
-                var result => result,
+                result = await base.InvokeCoreAsync(arguments, cancellationToken);
+            }
+            // Binding throws JsonException (wrong type) or ArgumentException (missing value) without naming the argument,
+            // so find the culprit here. If every argument binds, the exception came from inside the tool: let it propagate.
+            catch (Exception ex) when (ex is JsonException or ArgumentException && BadArgument(arguments) is { } problem)
+            {
+                return ToolError($"Invalid arguments for {Name}: {problem}");
+            }
+            return result is CapabilityError error ? ToolError(error.Error) : result;
+        }
+
+        private static CallToolResult ToolError(string text) => new() { IsError = true, Content = [new TextContentBlock { Text = text }] };
+
+        private string? BadArgument(AIFunctionArguments arguments)
+        {
+            foreach (var parameter in UnderlyingMethod?.GetParameters() ?? [])
+            {
+                if (parameter.ParameterType == typeof(CancellationToken)) continue;
+                if (!arguments.TryGetValue(parameter.Name!, out var value) || value is null)
+                {
+                    if (!parameter.IsOptional) return $"'{parameter.Name}' is required.";
+                    continue;
+                }
+                if (value is not JsonElement json) continue;
+                try
+                {
+                    JsonSerializer.Deserialize(json, parameter.ParameterType, CapabilityCatalog.SerializerOptions);
+                }
+                catch (JsonException)
+                {
+                    var given = json.GetRawText();
+                    return $"'{parameter.Name}' must be {Expected(parameter.ParameterType)}, not {(given.Length > 40 ? given[..40] + "…" : given)}.";
+                }
+            }
+            return null;
+        }
+
+        private static string Expected(Type type)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            if (type.IsArray) return $"a list of {Plural(type.GetElementType()!)}";
+            return Type.GetTypeCode(type) switch
+            {
+                TypeCode.String => "a string",
+                TypeCode.Boolean => "true or false",
+                TypeCode.Int16 or TypeCode.Int32 or TypeCode.Int64 => "a whole number",
+                TypeCode.Single or TypeCode.Double or TypeCode.Decimal => "a number",
+                _ => $"a {type.Name}",
             };
+        }
+
+        private static string Plural(Type element) => Expected(element) switch
+        {
+            "a string" => "strings",
+            "a whole number" => "whole numbers",
+            "a number" => "numbers",
+            var other => other,
+        };
     }
 }
