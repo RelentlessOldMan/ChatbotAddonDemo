@@ -77,7 +77,7 @@ flowchart TB
         direction TB
         ui["Screens<br/>plans · runs · spec sheets"]
         chat["Chat panel<br/>(off until enabled)"]
-        dcap["Capability catalog"]
+        dcap["Tools for AI (capability catalog)<br/>names, descriptions, permissions"]
         dlogic["Core logic"]
     end
 
@@ -85,7 +85,7 @@ flowchart TB
         direction TB
         cmds["Command-line processing<br/>plans · run · summary · report"]
         mcp["MCP server mode<br/>demo-cli mcp"]
-        ccap["Capability catalog"]
+        ccap["Tools for AI (capability catalog)<br/>names, descriptions, permissions"]
         clogic["Core logic"]
     end
 
@@ -205,7 +205,7 @@ sequenceDiagram
     actor U as Engineer
     participant P as Chat panel (our app)
     participant M as Claude / OpenAI
-    participant C as Capability catalog
+    participant C as Tools for AI (capability catalog)
     participant B as Core logic + files
 
     U->>P: "Make a hot/cold plan from the LDO-3300 datasheet … run it and tell me what you find"
@@ -385,7 +385,7 @@ This shows **which project references which library** when building. It is *not*
 ```mermaid
 flowchart BT
     domain["Demo.Domain<br/>core logic"]
-    caps["Demo.Capabilities<br/>capability catalog"]
+    caps["Demo.Capabilities<br/>tools for AI (capability catalog)"]
     ai["Demo.Ai<br/>model clients, chat loop, credentials"]
     desk["Demo.Desktop<br/>WPF app"]
     cli["Demo.Cli<br/>console tool + MCP server mode"]

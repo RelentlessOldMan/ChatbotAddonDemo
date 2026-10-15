@@ -25,13 +25,13 @@ flowchart LR
     subgraph desktop["Demo.Desktop.exe (WPF app)"]
         ui["Screens"]
         chat["Chat panel<br/>(opt-in)"]
-        dcap["Capability<br/>catalog"]
+        dcap["Tools for AI<br/>what it may do,<br/>with permissions"]
         dlogic["Core logic"]
     end
     subgraph cli["demo-cli.exe (console tool)"]
         cmds["Command-line<br/>processing"]
         mcp["MCP server mode<br/>demo-cli mcp"]
-        ccap["Capability<br/>catalog"]
+        ccap["Tools for AI<br/>what it may do,<br/>with permissions"]
         clogic["Core logic"]
     end
 
@@ -79,7 +79,7 @@ The important points:
 
 - **Nothing in our apps "calls MCP".** MCP is a door *into* the console tool for coding agents.
 - **The model never touches files or the bench.** It can only *ask* for a tool; our code decides and runs it.
-- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same core logic, so the same rules apply to everyone.
+- **The tools for AI, called the capability catalog, are defined once**: 13 tools, each with a name and description the model reads, its inputs, and a permission class (Read, Write or Execute). They are used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same core logic, so the same rules apply to everyone.
 - **MCP inside the desktop app is optional and not built.** The design explains when you'd want it and what it would take to secure.
 
 **Full explanation, with step-by-step sequence diagrams: [docs/design.md](docs/design.md).**
