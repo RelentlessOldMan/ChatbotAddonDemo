@@ -75,24 +75,24 @@ flowchart TB
 
     subgraph desktop["Demo.Desktop.exe: the WPF app"]
         direction TB
-        ui["Screens<br/>plans · runs · spec sheets"]
+        ui["Screens"]
         chat["Chat panel<br/>(off until enabled)"]
         dcap["Capability catalog"]
-        dlogic["Bench logic"]
+        dlogic["Core logic"]
     end
 
     subgraph cli["demo-cli.exe: the console tool"]
         direction TB
-        cmds["Commands<br/>plans · run · summary · report"]
+        cmds["Commands"]
         mcp["MCP server mode<br/>demo-cli mcp"]
         ccap["Capability catalog"]
-        clogic["Bench logic"]
+        clogic["Core logic"]
     end
 
     llm["💲 Claude or OpenAI API<br/>billed to the customer's key or gateway"]
     agent["Claude Code / Codex"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
-    ws[("Workspace folder<br/>specs · plans · runs")]
+    ws[("Workspace folder<br/>the tool's data files")]
 
     eng -- "A: clicks" --> ui
     eng -- "B: types commands" --> cmds
@@ -127,10 +127,10 @@ flowchart TB
 
 | Path | Who | What happens, step by step | AI involved? | Who pays for AI |
 |---|---|---|---|---|
-| **A** | Engineer at the desktop app | Clicks a button → the screen calls the bench logic directly. *Unchanged legacy behavior.* | No | n/a |
-| **B** | Engineer at a terminal or script | Types `demo-cli run TP-1001` → the command calls the bench logic directly. *Unchanged legacy behavior.* | No | n/a |
-| **C** | Engineer in the chat panel | **C1** 💲 the app sends the question and the list of tools to Claude/OpenAI. **C2** 💲 the model replies "call `create_test_plan_from_spec` with these arguments". **C3** the app shows an approval card if the tool creates files or uses the bench, then runs the tool through the capability catalog, which calls the bench logic (free). The result goes back to the model, 💲 another billed request, and C1 to C3 repeat until it answers in words. | Yes, **our app** talks to the model | The customer, via their API key or gateway |
-| **D** | Engineer using Claude Code / Codex | **D0** 💲 the agent sends the request to its own model, which decides to use one of our tools. **D1** the agent starts `demo-cli mcp` as a child process and talks to it over stdin/stdout. **D2** the console tool runs the tool through the same capability catalog and bench logic and replies (free). The result goes back to the agent's model (💲 again, on the agent's side). The process exits when the agent session ends. | Yes, but **only inside their agent**; our code never talks to a model | The agent user, via their own subscription. Our tool needs no key. |
+| **A** | Engineer at the desktop app | Clicks a button → the screen calls the core logic directly. *Unchanged legacy behavior.* | No | n/a |
+| **B** | Engineer at a terminal or script | Types `demo-cli run TP-1001` → the command calls the core logic directly. *Unchanged legacy behavior.* | No | n/a |
+| **C** | Engineer in the chat panel | **C1** 💲 the app sends the question and the list of tools to Claude/OpenAI. **C2** 💲 the model replies "call `create_test_plan_from_spec` with these arguments". **C3** the app shows an approval card if the tool creates files or uses the bench, then runs the tool through the capability catalog, which calls the core logic (free). The result goes back to the model, 💲 another billed request, and C1 to C3 repeat until it answers in words. | Yes, **our app** talks to the model | The customer, via their API key or gateway |
+| **D** | Engineer using Claude Code / Codex | **D0** 💲 the agent sends the request to its own model, which decides to use one of our tools. **D1** the agent starts `demo-cli mcp` as a child process and talks to it over stdin/stdout. **D2** the console tool runs the tool through the same capability catalog and core logic and replies (free). The result goes back to the agent's model (💲 again, on the agent's side). The process exits when the agent session ends. | Yes, but **only inside their agent**; our code never talks to a model | The agent user, via their own subscription. Our tool needs no key. |
 
 ### Where tokens are spent (and where they aren't)
 
@@ -150,8 +150,8 @@ What the customer sees and controls: the panel shows tokens used and an estimate
 
 - **Nothing in our apps "calls MCP".** MCP is a *door into* the console tool for coding agents. Our code is the MCP *server*; the agent is the client.
 - **The model never touches files or the bench.** In path C the model only *asks* for a tool by name; our app decides whether to run it (approval) and runs it. In path D the same is true, with the agent in the middle.
-- **Paths A and B don't go through the capability catalog**, and they don't need to. The catalog is the *AI-facing* adapter: tool names, descriptions written for models, JSON schemas, and safety classes. People already have their UI and commands. All four paths end in the same bench logic, so the same rules (limits, ranges, "the bench runs one plan at a time") apply to everyone.
-- **Each program contains its own copy of the catalog and the bench logic.** They are libraries compiled into each exe, not services the exes call. The programs share state only through the workspace folder.
+- **Paths A and B don't go through the capability catalog**, and they don't need to. The catalog is the *AI-facing* adapter: tool names, descriptions written for models, JSON schemas, and safety classes. People already have their UI and commands. All four paths end in the same core logic, so the same rules (limits, ranges, "the bench runs one plan at a time") apply to everyone.
+- **Each program contains its own copy of the catalog and the core logic.** They are libraries compiled into each exe, not services the exes call. The programs share state only through the workspace folder.
 - **The chat panel and MCP are independent.** You can turn on either, both, or neither.
 
 ## 4. Why each piece exists
@@ -167,7 +167,7 @@ What the customer sees and controls: the panel shows tokens used and an estimate
 
 | Library (project) | Responsibility | Used by | Why it's a separate piece |
 |---|---|---|---|
-| **Demo.Domain**, the "bench logic" | Plans (XML + schema + validation), spec-sheet import, the simulated bench, result files, plots, analysis, report. **Knows nothing about AI.** | Both programs | It's the legacy tool's core. Every way in ends here, so the rules are enforced once. |
+| **Demo.Domain**, the "core logic" | Plans (XML + schema + validation), spec-sheet import, the simulated bench, result files, plots, analysis, report. **Knows nothing about AI.** | Both programs | It's the legacy tool's core. Every way in ends here, so the rules are enforced once. |
 | **Demo.Capabilities**, the "capability catalog" | The list of what AI may do: 13 shared tools (the desktop app adds a 14th, `get_current_view`, for its chat panel only), each with a model-facing description, typed parameters (which become the JSON schema) and a safety class (Read / Write / Execute). | Both programs | Defined **once** and used by both the chat panel and MCP. Without it, chat tools and MCP tools would be written twice and drift apart. See [ADR-001](adr/001-capability-layer.md). |
 | **Demo.Ai** | Talking to Claude/OpenAI (`IChatClient`), the chat loop with approvals, credentials (DPAPI, gateway, env var), cost meter. | Desktop app only | Everything about *our app calling a model*. The console tool doesn't reference it, because it never calls a model. |
 | *(MCP server code, inside demo-cli)* | Turns the catalog into MCP tools and applies the `--allow-writes` / `--allow-runs` policy. | Console tool only | Small adapter: about 100 lines on top of the official MCP SDK. |
@@ -206,7 +206,7 @@ sequenceDiagram
     participant P as Chat panel (our app)
     participant M as Claude / OpenAI
     participant C as Capability catalog
-    participant B as Bench logic + files
+    participant B as Core logic + files
 
     U->>P: "Make a hot/cold plan from the LDO-3300 datasheet … run it and tell me what you find"
     P->>M: 💲 request 1: system prompt + 14 tool definitions (13 shared + get_current_view) + question
@@ -296,7 +296,7 @@ sequenceDiagram
     participant L as 💲 Agent's model (agent user's subscription)
     participant A as Claude Code / Codex
     participant S as demo-cli mcp (child process)
-    participant B as Bench logic + files
+    participant B as Core logic + files
 
     E->>A: "Run the rev-B targets over temperature and tell me what fails"
     A->>S: starts "demo-cli mcp --allow-writes --allow-runs"
@@ -384,7 +384,7 @@ This shows **which project references which library** when building. It is *not*
 
 ```mermaid
 flowchart BT
-    domain["Demo.Domain<br/>bench logic"]
+    domain["Demo.Domain<br/>core logic"]
     caps["Demo.Capabilities<br/>capability catalog"]
     ai["Demo.Ai<br/>model clients, chat loop, credentials"]
     desk["Demo.Desktop<br/>WPF app"]

@@ -26,19 +26,19 @@ flowchart LR
         ui["Screens"]
         chat["Chat panel<br/>(opt-in)"]
         dcap["Capability<br/>catalog"]
-        dlogic["Bench logic"]
+        dlogic["Core logic"]
     end
     subgraph cli["demo-cli.exe (console tool)"]
         cmds["Commands"]
         mcp["MCP server mode<br/>demo-cli mcp"]
         ccap["Capability<br/>catalog"]
-        clogic["Bench logic"]
+        clogic["Core logic"]
     end
 
     llm["💲 Claude / OpenAI API<br/>billed to the customer's key"]
     agent["Claude Code / Codex"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
-    ws[("Workspace folder<br/>specs · plans · runs")]
+    ws[("Workspace folder<br/>the tool's data files")]
 
     eng -- A --> ui --> dlogic
     eng -- B --> cmds --> clogic
@@ -69,7 +69,7 @@ flowchart LR
 | Activity | Calls a model? | Whose tokens |
 |---|---|---|
 | Using the screens or `demo-cli` commands (paths A, B) | **No** | none |
-| Running a plan, writing CSVs/plots, analyzing results, writing the report | **No.** The bench logic is ordinary code | none |
+| Running a plan, writing CSVs/plots, analyzing results, writing the report | **No.** The core logic is ordinary code | none |
 | Each message in the chat panel (path C) | **Yes.** Several requests per message: one per model↔tool round trip, each resending the conversation so far | **The customer's** API key, or their company gateway |
 | A coding agent using `demo-cli mcp` (path D) | `demo-cli` never does. The *agent* calls its own model to decide which tool to use next | **The agent user's** own subscription |
 | `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model stands in | none |
@@ -79,7 +79,7 @@ The important points:
 
 - **Nothing in our apps "calls MCP".** MCP is a door *into* the console tool for coding agents.
 - **The model never touches files or the bench.** It can only *ask* for a tool; our code decides and runs it.
-- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same bench logic, so the same rules apply to everyone.
+- **The capability catalog is defined once** (13 tools, each Read, Write or Execute) and is used by both the chat panel and MCP. The chat panel adds one more read-only tool of its own, `get_current_view`, so the assistant can see which plan or run you're looking at. All four paths end in the same core logic, so the same rules apply to everyone.
 - **MCP inside the desktop app is optional and not built.** The design explains when you'd want it and what it would take to secure.
 
 **Full explanation, with step-by-step sequence diagrams: [docs/design.md](docs/design.md).**
@@ -165,7 +165,7 @@ Connect a coding agent: [docs/guides/connecting-a-coding-agent.md](docs/guides/c
 
 ```
 src/
-  Demo.Domain/         Bench logic: plans (XML + XSD), spec import, simulated bench, result files, plots, analysis. No AI.
+  Demo.Domain/         Core logic: plans (XML + XSD), spec import, simulated bench, result files, plots, analysis. No AI.
   Demo.Capabilities/   The capability catalog: what AI may do (Read / Write / Execute), defined once.
   Demo.Ai/             Calling Claude/OpenAI (IChatClient), chat loop with approvals, credentials, cost meter.
   Demo.Desktop/        WPF app: the legacy screens + the opt-in chat panel.
