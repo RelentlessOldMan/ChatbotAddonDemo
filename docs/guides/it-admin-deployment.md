@@ -1,7 +1,7 @@
 # IT admin guide: deploying the AI features
 
 ## Recommended: route through your own AI gateway
-Point the app at a gateway you operate, for example LiteLLM, Azure API Management, or a provider's enterprise proxy. The gateway holds the real vendor key and enforces budgets, logging, DLP and model allow-lists. Desktops then hold **no long-lived vendor key**.
+Point the app at a gateway you operate, for example LiteLLM, Azure API Management, or a provider's enterprise proxy. The gateway holds the real vendor key and enforces budgets, logging, data-loss prevention (DLP) and model allow-lists. Desktops then hold **no long-lived vendor key**.
 
 Set machine policy (Group Policy Preferences or Intune) under `HKLM\Software\Policies\ChatbotAddonDemo`:
 
@@ -13,7 +13,9 @@ Set machine policy (Group Policy Preferences or Intune) under `HKLM\Software\Pol
 | `OpenAI\GatewayToken` | *(optional)* | REG_SZ | As above |
 | `DisableUserKeys` | `1` | REG_DWORD | Hide the "paste your own key" option and ignore personal keys in `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; only the gateway may be used |
 
-Gateway URLs must use `https://` (plain `http://` is accepted only for `localhost`), so a token is never sent in clear text. A gateway URL that fails this check is reported in Settings, and the app does not fall back to personal keys.
+Gateway URLs must use `https://` (plain `http://` is accepted only for `localhost`), so a token is never sent in clear text. Any gateway value that is present but unusable (not https, or not a valid address) is reported in Settings, and the app never falls back to personal keys.
+
+When no gateway is set, the app always uses the provider's official address (`api.anthropic.com` / `api.openai.com/v1`), so environment variables such as `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` can't redirect users' keys somewhere else.
 
 Precedence when the app chooses credentials: **gateway → environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) → user-entered key**. The Settings page always tells the user which one is in use.
 
@@ -29,6 +31,8 @@ For scripted or VDI rollouts, set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for th
 | Feature | Outbound | Inbound |
 |---|---|---|
 | Assistant (desktop app) | HTTPS to the provider or your gateway | none |
-| Coding agents (`demo-cli mcp`) | none (the agent's own traffic is the agent's business) | none: stdin/stdout only, no port |
+| Coding agents (`demo-cli mcp`) | none from our tool (the agent's own traffic is the agent's business) | none: stdin/stdout only, no port |
+
+**What leaves the PC with coding agents:** `demo-cli` itself never calls a model. But its tool results (plan details, spec limits, run findings) enter the agent's context and go to the agent's AI provider, under the agent user's terms with that provider. Treat that the same as any other data your users give their coding agent.
 
 See also [security notes](../security.md).
