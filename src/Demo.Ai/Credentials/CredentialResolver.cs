@@ -33,8 +33,11 @@ public sealed record ResolvedCredential(CredentialSource Source, string? ApiKey 
 /// <summary>IT-managed settings. On Windows these come from HKLM\Software\Policies (Group Policy / Intune).</summary>
 public interface IMachinePolicy
 {
-    /// <summary>Base URL of an LLM gateway that proxies the provider's API.</summary>
-    Uri? GatewayUrl(AiProvider provider);
+    /// <summary>
+    /// Base URL of an LLM gateway that proxies the provider's API, exactly as IT entered it (null when not set).
+    /// Returned unparsed so a value that isn't a valid address still blocks personal keys instead of being ignored.
+    /// </summary>
+    string? GatewayUrl(AiProvider provider);
 
     /// <summary>Token the gateway expects; optional when the gateway uses Windows/network auth.</summary>
     string? GatewayToken(AiProvider provider);
@@ -46,7 +49,7 @@ public interface IMachinePolicy
 public sealed class NoMachinePolicy : IMachinePolicy
 {
     public static readonly NoMachinePolicy Instance = new();
-    public Uri? GatewayUrl(AiProvider provider) => null;
+    public string? GatewayUrl(AiProvider provider) => null;
     public string? GatewayToken(AiProvider provider) => null;
     public bool DisableUserKeys => false;
 }
@@ -60,16 +63,24 @@ public sealed class RegistryMachinePolicy : IMachinePolicy
 {
     private const string Root = @"Software\Policies\ChatbotAddonDemo";
 
-    public Uri? GatewayUrl(AiProvider provider) =>
-        Read($@"{Root}\{provider}", "GatewayUrl") is { } s && Uri.TryCreate(s, UriKind.Absolute, out var uri) ? uri : null;
+    public string? GatewayUrl(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayUrl");
 
     public string? GatewayToken(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayToken");
 
-    public bool DisableUserKeys =>
-        Registry.LocalMachine.OpenSubKey(Root)?.GetValue("DisableUserKeys") is int value && value != 0;
+    public bool DisableUserKeys
+    {
+        get
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(Root);
+            return key?.GetValue("DisableUserKeys") is int value && value != 0;
+        }
+    }
 
-    private static string? Read(string key, string name) =>
-        Registry.LocalMachine.OpenSubKey(key)?.GetValue(name) as string;
+    private static string? Read(string path, string name)
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(path);
+        return key?.GetValue(name) as string;
+    }
 }
 
 /// <summary>
@@ -88,9 +99,11 @@ public sealed class CredentialResolver(
 
     public ResolvedCredential Resolve(AiProvider provider)
     {
-        if (policy.GatewayUrl(provider) is { } gateway)
+        if (policy.GatewayUrl(provider) is { } gatewayText)
         {
             // Never fall back to personal keys when IT has set a gateway, even a misconfigured one.
+            if (!Uri.TryCreate(gatewayText.Trim(), UriKind.Absolute, out var gateway))
+                return ResolvedCredential.Unusable("The AI gateway address set by your administrator isn't a valid address, so it isn't used. Ask IT to correct it.");
             return IsSecure(gateway)
                 ? new ResolvedCredential(CredentialSource.Gateway, policy.GatewayToken(provider), gateway)
                 : ResolvedCredential.Unusable($"The AI gateway address set by your administrator ({gateway.Scheme}://{gateway.Authority}) doesn't use https, so it isn't used. Ask IT to change it to https.");

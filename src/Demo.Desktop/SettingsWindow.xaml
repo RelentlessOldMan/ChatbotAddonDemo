@@ -70,9 +70,13 @@
 
                         <TextBlock Text="SPENDING LIMIT PER CHAT (USD, ESTIMATED)" Style="{StaticResource SectionLabel}"/>
                         <StackPanel Orientation="Horizontal">
-                            <TextBox Text="{Binding SpendCap}" Width="80"/>
+                            <TextBox Text="{Binding SpendCap, UpdateSourceTrigger=PropertyChanged}" Width="80"
+                                     AutomationProperties.AutomationId="SpendCapBox"/>
                             <TextBlock Text="Leave empty for no limit." Foreground="{StaticResource Muted}" Margin="10,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <TextBlock Text="{Binding SpendCapError}" Foreground="{StaticResource Bad}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Visibility="{Binding SpendCapError, Converter={StaticResource NonEmptyToVis}}"
+                                   AutomationProperties.AutomationId="SpendCapError"/>
 
                         <TextBlock Text="USING CLAUDE CODE OR CODEX?" Style="{StaticResource SectionLabel}" Margin="0,22,0,4"/>
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}">
@@ -85,7 +89,7 @@
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="12">
             <Button Style="{StaticResource PlainButton}" Content="Cancel" IsCancel="True" Margin="0,0,8,0"/>
-            <Button Style="{StaticResource PrimaryButton}" Content="Save" Click="Save_Click" AutomationProperties.AutomationId="SaveSettingsButton"/>
+            <Button Style="{StaticResource PrimaryButton}" Content="Save" Click="Save_Click" IsEnabled="{Binding CanSave}" AutomationProperties.AutomationId="SaveSettingsButton"/>
         </StackPanel>
     </Grid>
 </Window>

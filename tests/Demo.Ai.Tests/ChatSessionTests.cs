@@ -15,9 +15,21 @@ public sealed class ChatSessionTests : IDisposable
 
     public ChatSessionTests() => _bench = new TestBenchService(_workspace, BenchOptions.Instant);
 
-    private ChatSession Session(ScriptedChatClient model, decimal? cap = null, string priced = "claude-opus-5-5") =>
+    private ChatSession Session(ScriptedChatClient model, decimal? cap = null, string priced = "claude-opus-5-5", int maxRequests = 20) =>
         new(model, CapabilityCatalog.FromObject(new TestBenchCapabilities(_bench)), new UsageMeter(priced, cap),
-            ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+            ChatSessionOptions.For(TestBenchCapabilities.Instructions) with { MaxModelRequestsPerMessage = maxRequests });
+
+    private static List<AIContent> Contents(IEnumerable<ChatMessage> messages) => messages.SelectMany(m => m.Contents).ToList();
+
+    /// <summary>What both providers require: every tool call answered by its result, and no approval left unanswered.</summary>
+    private static void AssertSendable(IEnumerable<ChatMessage> messages)
+    {
+        var contents = Contents(messages);
+        var results = contents.OfType<FunctionResultContent>().Select(r => r.CallId).ToHashSet();
+        var answers = contents.OfType<ToolApprovalResponseContent>().Select(r => r.RequestId).ToHashSet();
+        Assert.All(contents.OfType<FunctionCallContent>(), call => Assert.Contains(call.CallId, results));
+        Assert.All(contents.OfType<ToolApprovalRequestContent>(), request => Assert.Contains(request.RequestId, answers));
+    }
 
     private static readonly Dictionary<string, object?> HotColdFromSpec = new()
     {
@@ -201,13 +213,110 @@ public sealed class ChatSessionTests : IDisposable
             ct.ThrowIfCancellationRequested();
             return true;
         }, cts.Token));
-        Assert.Single(session.History); // just the system prompt: the unfinished turn was rolled back
+        Assert.Single(session.History); // just the system prompt: no tool ran, so the unfinished turn was removed
 
         var turn = await session.SendAsync("hello", Answer(true));
 
         Assert.Equal("Hello again.", turn.Text);
         Assert.Equal(["hello"], model.Requests[1].Skip(1).Select(m => m.Text));
         Assert.Single(_bench.ListRuns()); // nothing was started
+    }
+
+    [Fact]
+    public async Task Cancelling_during_approval_keeps_lookups_that_already_ran_but_no_dangling_request()
+    {
+        var model = new ScriptedChatClient(
+        [
+            Call("get_bench_info"),
+            Call("start_test_run", new Dictionary<string, object?> { ["planId"] = "TP-1001" }),
+            Reply("Hello again."),
+        ]);
+        var session = Session(model);
+        using var cts = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("Run TP-1001", async (_, ct) =>
+        {
+            await cts.CancelAsync();
+            ct.ThrowIfCancellationRequested();
+            return true;
+        }, cts.Token));
+
+        Assert.Equal("get_bench_info", Assert.Single(Contents(session.History).OfType<FunctionCallContent>()).Name);
+        Assert.Empty(Contents(session.History).OfType<ToolApprovalRequestContent>());
+        AssertSendable(session.History);
+
+        Assert.Equal("Hello again.", (await session.SendAsync("hello", Answer(true))).Text);
+        AssertSendable(model.Requests[^1]);
+        Assert.Single(_bench.ListRuns()); // nothing was started
+    }
+
+    [Fact]
+    public async Task Approved_change_stays_in_the_conversation_when_the_next_request_fails()
+    {
+        var model = new ScriptedChatClient(
+        [
+            Call("create_test_plan_from_spec", HotColdFromSpec),
+            _ => throw new HttpRequestException("outage"),
+            Reply("Yes, TP-1002 is saved."),
+        ]);
+        var session = Session(model);
+        var announced = new List<ChatMessage>();
+        session.MessageAdded += announced.Add;
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => session.SendAsync("Make a hot/cold plan from the datasheet", Answer(true)));
+
+        Assert.Equal(["TP-1001", "TP-1002"], _bench.ListPlans().Select(p => p.Id));
+        var call = Assert.Single(Contents(session.History).OfType<FunctionCallContent>());
+        Assert.Equal("create_test_plan_from_spec", call.Name);
+        var result = Assert.Single(Contents(session.History).OfType<FunctionResultContent>());
+        Assert.Equal(call.CallId, result.CallId);
+        Assert.Contains(announced, m => m.Contents.Contains(result)); // so the UI can show the change as done
+        AssertSendable(session.History);
+
+        var turn = await session.SendAsync("Did it save?", Answer(true));
+
+        Assert.Equal("Yes, TP-1002 is saved.", turn.Text);
+        Assert.Contains(Contents(model.Requests[^1]).OfType<FunctionResultContent>(), r => r.CallId == call.CallId); // the model still knows
+        AssertSendable(model.Requests[^1]);
+        Assert.Equal(2, _bench.ListPlans().Count); // and it wasn't run a second time
+        Assert.Single(_approvalsAsked);
+    }
+
+    [Fact]
+    public async Task Approved_change_stays_in_the_conversation_when_the_spending_limit_stops_the_next_request()
+    {
+        // The first request costs $0.80 + output; projecting the next one at a similar size would pass $1.
+        var model = new ScriptedChatClient([Call("create_test_plan_from_spec", HotColdFromSpec, inputTokens: 200_000), Reply("never sent")]);
+        var session = Session(model, cap: 1.00m);
+
+        await Assert.ThrowsAsync<SpendCapExceededException>(() => session.SendAsync("Make a hot/cold plan from the datasheet", Answer(true)));
+
+        Assert.Single(model.Requests);
+        Assert.Equal(2, _bench.ListPlans().Count);
+        Assert.Single(Contents(session.History).OfType<FunctionResultContent>());
+        AssertSendable(session.History);
+    }
+
+    [Fact]
+    public async Task Model_requests_per_message_are_capped_across_approvals()
+    {
+        // A model that asks for another plan after every one: each approval restarts the per-call tool limit.
+        var model = new ScriptedChatClient([]) { Fallback = Call("create_test_plan_from_spec", HotColdFromSpec) };
+        var session = Session(model, maxRequests: 3);
+
+        var refused = await Assert.ThrowsAsync<TurnRequestLimitException>(() => session.SendAsync("Make plans", Answer(true)));
+
+        Assert.Contains("after 3 requests", refused.Message);
+        Assert.Equal(3, model.Requests.Count);
+        Assert.Equal(3, _approvalsAsked.Count);
+        Assert.Equal(4, _bench.ListPlans().Count); // the seeded plan + the three approved ones, each kept in the conversation
+        Assert.Equal(3, Contents(session.History).OfType<FunctionResultContent>().Count());
+        AssertSendable(session.History);
+
+        // The count starts again with the next message.
+        await Assert.ThrowsAsync<TurnRequestLimitException>(() => session.SendAsync("No more plans", Answer(false)));
+        Assert.Equal(6, model.Requests.Count);
+        Assert.Equal(4, _bench.ListPlans().Count);
     }
 
     [Fact]

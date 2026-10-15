@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -31,27 +32,66 @@ public sealed record AiSettings
             : ProviderInfo.For(provider).DefaultModel;
 }
 
+/// <summary>
+/// The spending limit as typed in Settings. Only an empty box means no limit: anything else must be a positive
+/// dollar amount, so a typo can never silently remove the limit. A dot is always the decimal point (whatever the
+/// Windows region), so "1.50" can't be read as 150.
+/// </summary>
+public static class SpendLimitText
+{
+    public const string Problem = "Enter a dollar amount above zero, such as 1.50, or leave the box empty for no limit.";
+
+    /// <summary>False when the text isn't a valid limit; <paramref name="limitUsd"/> is null for "no limit".</summary>
+    public static bool TryParse(string? text, out decimal? limitUsd)
+    {
+        limitUsd = null;
+        var value = (text ?? "").Trim();
+        if (value.Length == 0) return true;
+        if (value.StartsWith('$')) value = value[1..].TrimStart();
+        if (!decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+            return false;
+        limitUsd = amount;
+        return true;
+    }
+
+    public static string Format(decimal? limitUsd) => limitUsd?.ToString("0.00##", CultureInfo.InvariantCulture) ?? "";
+}
+
 public sealed class AiSettingsStore(string path)
 {
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }, // "Provider": 7 is not a provider
     };
 
     public string Path { get; } = path;
 
     public AiSettings Load()
     {
-        if (!File.Exists(Path)) return new AiSettings();
+        // A corrupt or unreadable settings file must not stop the legacy tool from starting.
         try
         {
-            return JsonSerializer.Deserialize<AiSettings>(File.ReadAllText(Path), Options) ?? new AiSettings();
+            if (!File.Exists(Path)) return new AiSettings();
+            return Normalize(JsonSerializer.Deserialize<AiSettings>(File.ReadAllText(Path), Options) ?? new AiSettings());
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            return new AiSettings(); // A corrupt settings file must not stop the legacy tool from starting.
+            return new AiSettings();
         }
+    }
+
+    /// <summary>Repairs values the JSON can hold but the app can't use, such as <c>"Models": null</c>.</summary>
+    private static AiSettings Normalize(AiSettings loaded)
+    {
+        var defaults = new AiSettings();
+        return loaded with
+        {
+            Provider = Enum.IsDefined(loaded.Provider) ? loaded.Provider : defaults.Provider,
+            Models = (loaded.Models ?? []).Where(m => Enum.IsDefined(m.Key) && m.Value is not null).ToDictionary(),
+            // Null is a deliberate "no limit"; zero or less can only come from a damaged file, so the default applies.
+            SessionSpendCapUsd = loaded.SessionSpendCapUsd is <= 0 ? defaults.SessionSpendCapUsd : loaded.SessionSpendCapUsd,
+        };
     }
 
     public void Save(AiSettings settings)

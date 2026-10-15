@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Demo.Ai;
@@ -83,7 +84,7 @@ public sealed partial class ChatViewModel : ObservableObject
         {
             Items.Add(new NoticeItem("Stopped."));
         }
-        catch (SpendCapExceededException ex)
+        catch (Exception ex) when (ex is SpendCapExceededException or TurnRequestLimitException)
         {
             Items.Add(new NoticeItem(ex.Message, isError: true));
         }
@@ -143,8 +144,14 @@ public sealed partial class ChatViewModel : ObservableObject
     private ChatSession CreateSession()
     {
         var meter = new UsageMeter(Model, _settings.SessionSpendCapUsd);
+        var generation = _generation;
+        // The meter reports from whichever thread the request finished on (often not the UI's), so the summary is
+        // updated on the UI thread, and not at all once this chat has been cleared or closed.
         // Token counts come from the provider; only the dollar figure is an estimate.
-        EventHandler onUsage = (_, _) => UsageSummary = meter.Summary + (meter.EstimatedCostUsd is null ? "" : " (estimate)");
+        EventHandler onUsage = (_, _) => Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            if (generation == _generation) UsageSummary = meter.Summary + (meter.EstimatedCostUsd is null ? "" : " (estimate)");
+        });
         meter.Changed += onUsage;
         var session = new ChatSession(_services.CreateChatClient(_settings), _services.Catalog, meter, _services.ChatOptions);
         session.MessageAdded += Render;
@@ -197,7 +204,7 @@ public sealed partial class ChatViewModel : ObservableObject
                 case ToolApprovalRequestContent:
                     break; // Rendered by ApproveAsync as an approval card.
                 case FunctionCallContent call when !_itemsByCallId.ContainsKey(call.CallId):
-                    var title = _services.Catalog.Capabilities.FirstOrDefault(c => c.Name == call.Name)?.Title ?? call.Name;
+                    var title = _services.Catalog.TryGet(call.Name, out var capability) ? capability.Title : call.Name;
                     var tool = new ToolItem(title, call.Name);
                     _itemsByCallId[call.CallId] = tool;
                     Items.Add(tool);

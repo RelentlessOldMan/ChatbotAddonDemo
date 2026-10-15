@@ -11,9 +11,11 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         viewModel.SettingsRequested += () =>
         {
-            var dialog = new SettingsWindow(new SettingsViewModel(services)) { Owner = this };
+            var settings = new SettingsViewModel(services);
+            var dialog = new SettingsWindow(settings) { Owner = this };
             App.MakeUnobtrusive(dialog);
-            if (dialog.ShowDialog() == true) viewModel.ApplySettings();
+            // A key saved or removed in the dialog is already in effect, even if the dialog is then cancelled.
+            if (dialog.ShowDialog() == true || settings.CredentialsChanged) viewModel.ApplySettings();
         };
     }
 }
