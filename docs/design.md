@@ -75,7 +75,7 @@ flowchart TB
 
     subgraph desktop["Demo.Desktop.exe: the WPF app"]
         direction TB
-        ui["Screens"]
+        ui["Screens<br/>plans · runs · spec sheets"]
         chat["Chat panel<br/>(off until enabled)"]
         dcap["Capability catalog"]
         dlogic["Core logic"]
@@ -83,7 +83,7 @@ flowchart TB
 
     subgraph cli["demo-cli.exe: the console tool"]
         direction TB
-        cmds["Commands"]
+        cmds["Commands<br/>plans · run · summary · report"]
         mcp["MCP server mode<br/>demo-cli mcp"]
         ccap["Capability catalog"]
         clogic["Core logic"]
@@ -92,7 +92,7 @@ flowchart TB
     llm["💲 Claude or OpenAI API<br/>billed to the customer's key or gateway"]
     agent["Claude Code / Codex"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
-    ws[("Workspace folder<br/>the tool's data files")]
+    ws[("Workspace folder<br/>specs · plans · runs")]
 
     eng -- "A: clicks" --> ui
     eng -- "B: types commands" --> cmds

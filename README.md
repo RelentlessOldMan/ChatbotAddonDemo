@@ -38,7 +38,7 @@ flowchart LR
     llm["💲 Claude / OpenAI API<br/>billed to the customer's key"]
     agent["Claude Code / Codex"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's subscription"]
-    ws[("Workspace folder<br/>the tool's data files")]
+    ws[("Workspace folder<br/>specs · plans · runs")]
 
     eng -- A --> ui --> dlogic
     eng -- B --> cmds --> clogic
