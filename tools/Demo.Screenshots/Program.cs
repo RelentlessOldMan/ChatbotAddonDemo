@@ -15,9 +15,17 @@ namespace Demo.Screenshots;
 /// </summary>
 public static class Program
 {
+    // Typed into the chat and shown in the screenshots; the scripted assistant ignores the wording.
+    // Keep in step with DemoScript.FirstQuestion and SecondQuestion in the app.
     private const string FirstQuestion =
         "Make a hot/cold plan for the LDO-3300 from its datasheet: -40, 25, 85 and 125 °C at 3.6 V and 5 V, 3 units. Then run it and tell me what you find.";
     private const string SecondQuestion = "Which units failed at 125 °C?";
+
+    /// <summary>Holds this tool's throwaway folders; removed at the end when nothing else is left in it.</summary>
+    private static readonly string TempRoot = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots");
+
+    /// <summary>The MCP session normally takes a second or two; a hung server fails the capture instead of blocking it.</summary>
+    private static readonly TimeSpan McpTimeout = TimeSpan.FromSeconds(60);
 
     [STAThread]
     public static int Main(string[] args)
@@ -30,7 +38,7 @@ public static class Program
 
         // Capture into a staging folder and replace the published images only when every capture worked,
         // so a failure halfway leaves docs/images as it was rather than with images missing.
-        var staging = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", "images-" + Guid.NewGuid().ToString("N"));
+        var staging = Path.Combine(TempRoot, "images-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
         try
         {
@@ -46,6 +54,7 @@ public static class Program
         finally
         {
             TryDelete(staging);
+            try { Directory.Delete(TempRoot); } catch (IOException) { /* not empty: another run is using it */ } catch (UnauthorizedAccessException) { }
         }
 
         Console.WriteLine($"Screenshots written to {outDir}");
@@ -54,7 +63,7 @@ public static class Program
 
     private static void CaptureDesktop(string exe, string outDir)
     {
-        var profile = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
+        var profile = Path.Combine(TempRoot, Guid.NewGuid().ToString("N"));
         // The app shows the workspace path on screen, so use a neutral one rather than a path under the user profile.
         var root = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "TestBench");
         var workspace = Path.Combine(root, "workspace");
@@ -128,7 +137,7 @@ public static class Program
 
     private static void CaptureConsole(string cliExe, string outDir)
     {
-        var workspace = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(TempRoot, Guid.NewGuid().ToString("N"));
         var text = new StringBuilder();
         try
         {
@@ -152,8 +161,10 @@ public static class Program
 
     private static async Task CaptureCliMcpAsync(string cliExe, string outDir)
     {
-        var workspace = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-shots", Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(TempRoot, Guid.NewGuid().ToString("N"));
         var text = new StringBuilder();
+        using var timeout = new CancellationTokenSource(McpTimeout);
+        var ct = timeout.Token;
         try
         {
             await using (var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
@@ -162,13 +173,13 @@ public static class Program
                 Command = cliExe,
                 Arguments = ["--workspace", workspace, "mcp", "--allow-writes", "--allow-runs"],
                 EnvironmentVariables = new Dictionary<string, string?> { ["DEMO_BENCH_DELAY_MS"] = "0" },
-            })))
+            }), cancellationToken: ct))
             {
                 text.AppendLine("agent starts:  demo-cli mcp --allow-writes --allow-runs   (stdio; no port, no key)");
                 text.AppendLine($"server:        {client.ServerInfo.Name} {client.ServerInfo.Version}");
                 text.AppendLine();
                 text.AppendLine("tools/list");
-                foreach (var t in await client.ListToolsAsync())
+                foreach (var t in await client.ListToolsAsync(cancellationToken: ct))
                 {
                     var a = t.ProtocolTool.Annotations;
                     var kind = a?.ReadOnlyHint == true ? "read " : a?.OpenWorldHint == true ? "bench" : "write";
@@ -179,7 +190,7 @@ public static class Program
                 async Task<JsonElement> Call(string tool, Dictionary<string, object?> args)
                 {
                     text.AppendLine($"tools/call {tool} {JsonSerializer.Serialize(args)}");
-                    var result = await client.CallToolAsync(tool, args);
+                    var result = await client.CallToolAsync(tool, args, cancellationToken: ct);
                     return JsonDocument.Parse(string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text))).RootElement;
                 }
     

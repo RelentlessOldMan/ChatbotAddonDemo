@@ -5,7 +5,7 @@ namespace Demo.Cli;
 /// <summary>A malformed command line. The tool prints the message and exits with code 2 (domain errors exit with 1).</summary>
 public sealed class UsageException(string message) : Exception(message);
 
-public enum OptionKind { Flag, Text, WholeNumber, Number, NumberList }
+public enum OptionKind { Flag, Text, TextList, WholeNumber, Number, NumberList }
 
 /// <summary>
 /// demo-cli's arguments: every <c>--option</c> (and its value) is taken first, and what remains are the
@@ -23,7 +23,7 @@ public sealed class CommandLine
         ["--supplies"] = OptionKind.NumberList,
         ["--loads"] = OptionKind.NumberList,
         ["--samples"] = OptionKind.WholeNumber,
-        ["--tests"] = OptionKind.Text,
+        ["--tests"] = OptionKind.TextList,
         ["--plan"] = OptionKind.Text,
         ["--test"] = OptionKind.Text,
         ["--temp"] = OptionKind.Number,
@@ -101,16 +101,24 @@ public sealed class CommandLine
 
     public double? Number(string name) => Text(name) is { } v ? double.Parse(v, NumberStyles.Float, Inv) : null;
 
-    public double[]? Numbers(string name) => Text(name)?.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(v => double.Parse(v, NumberStyles.Float, Inv)).ToArray();
+    public double[]? Numbers(string name) => Text(name) is { } v ? Items(v).Select(x => double.Parse(x, NumberStyles.Float, Inv)).ToArray() : null;
+
+    public string[]? List(string name) => Text(name) is { } v ? Items(v) : null;
+
+    /// <summary>"IQ, VOUT," is IQ and VOUT: blanks around and between the commas are dropped.</summary>
+    private static string[] Items(string value) => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>A finite number: "NaN", "Infinity" and values too big for a double (1e400) are not settings anyone means.</summary>
+    private static bool IsNumber(string value) => double.TryParse(value, NumberStyles.Float, Inv, out var number) && double.IsFinite(number);
 
     private static void Check(string name, OptionKind kind, string value)
     {
         var ok = kind switch
         {
             OptionKind.WholeNumber => int.TryParse(value, NumberStyles.Integer, Inv, out _),
-            OptionKind.Number => double.TryParse(value, NumberStyles.Float, Inv, out _),
-            OptionKind.NumberList => value.Split(',', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } parts
-                && parts.All(p => double.TryParse(p, NumberStyles.Float, Inv, out _)),
+            OptionKind.Number => IsNumber(value),
+            OptionKind.NumberList => Items(value) is { Length: > 0 } parts && parts.All(IsNumber),
+            OptionKind.TextList => Items(value).Length > 0,
             _ => value.Length > 0,
         };
         if (!ok)
@@ -119,6 +127,7 @@ public sealed class CommandLine
                 OptionKind.WholeNumber => $"{name} must be a whole number.",
                 OptionKind.Number => $"{name} must be a number, e.g. 3.6.",
                 OptionKind.NumberList => $"{name} must be a comma-separated list of numbers, e.g. -40,25,125.",
+                OptionKind.TextList => $"{name} must be a comma-separated list, e.g. IQ,VOUT.",
                 _ => $"{name} needs a value.",
             });
     }

@@ -19,10 +19,11 @@
 
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <!-- The MCP client for the agent's-eye screenshot; the path to demo-cli.exe is passed in on the command line. Same version as Demo.Cli. -->
+    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Demo.Cli\Demo.Cli.csproj" />
     <ProjectReference Include="..\..\src\Demo.Ai\Demo.Ai.csproj" />
   </ItemGroup>
 
