@@ -29,7 +29,7 @@ flowchart LR
         dlogic["Core logic"]
     end
     subgraph cli["demo-cli.exe (console tool)"]
-        cmds["Commands"]
+        cmds["Command-line<br/>processing"]
         mcp["MCP server mode<br/>demo-cli mcp"]
         ccap["Capability<br/>catalog"]
         clogic["Core logic"]

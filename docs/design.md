@@ -83,7 +83,7 @@ flowchart TB
 
     subgraph cli["demo-cli.exe: the console tool"]
         direction TB
-        cmds["Commands<br/>plans · run · summary · report"]
+        cmds["Command-line processing<br/>plans · run · summary · report"]
         mcp["MCP server mode<br/>demo-cli mcp"]
         ccap["Capability catalog"]
         clogic["Core logic"]
