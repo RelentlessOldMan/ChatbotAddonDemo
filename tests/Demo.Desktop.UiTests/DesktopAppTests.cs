@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Demo.Ai;
 using Demo.Screenshots;
 using FlaUI.Core.AutomationElements;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace Demo.Desktop.UiTests;
 
@@ -19,12 +21,16 @@ public sealed class DesktopAppTests : IDisposable
     private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(40);
     private readonly string _profile = Path.Combine(Path.GetTempPath(), "ChatbotAddonDemo-uitests", Guid.NewGuid().ToString("N"));
 
+    // Each test's app lets agents in under its own name, so they never meet the user's app or each other.
+    private readonly string _agentPipe = "ChatbotAddonDemo.UiTests." + Guid.NewGuid().ToString("N");
+
     private string Workspace => Path.Combine(_profile, "workspace");
+    private static string DesktopExe => RepoFile(@"src\Demo.Desktop\bin\{0}\net10.0-windows\demo-desktop.exe");
 
     private DesktopDriver Launch(AiSettings settings)
     {
         new AiSettingsStore(Path.Combine(_profile, "settings.json")).Save(settings);
-        return DesktopDriver.Launch(RepoFile(@"src\Demo.Desktop\bin\{0}\net10.0-windows\demo-desktop.exe"), "--demo", "--profile", _profile, "--workspace", Workspace);
+        return DesktopDriver.Launch(DesktopExe, "--demo", "--profile", _profile, "--workspace", Workspace, "--agent-pipe", _agentPipe);
     }
 
     [Fact]
@@ -49,6 +55,31 @@ public sealed class DesktopAppTests : IDisposable
 
         Assert.Contains("no key needed", d.Find("ChatConnection").Name);
         Assert.True(new AiSettingsStore(Path.Combine(_profile, "settings.json")).Load().ChatEnabled);
+    }
+
+    [Fact]
+    public void Settings_let_agents_in_and_add_other_mcp_servers()
+    {
+        using var d = Launch(new AiSettings());
+
+        d.Click("SettingsButton");
+        var settings = d.WaitForModal("SettingsWindow");
+        d.SetChecked("AgentsEnabledCheckBox", true, settings);
+        d.Click("AddServerButton", settings);
+        d.Type("ServerNameBox", "my github", settings);
+        d.Type("ServerCommandBox", "http://example.com/mcp", settings);
+        d.WaitUntil(() => d.Find("McpServersError", settings).Name.Contains("letters"), "the name to be refused");
+        Assert.False(d.Find("SaveSettingsButton", settings).IsEnabled);
+        d.Type("ServerNameBox", "github", settings);
+        d.WaitUntil(() => d.Find("McpServersError", settings).Name.Contains("https"), "the plain-http address to be refused");
+        d.Type("ServerCommandBox", "https://example.com/mcp", settings);
+        d.WaitUntil(() => d.Find("SaveSettingsButton", settings).IsEnabled, "Save to be enabled");
+        d.Click("SaveSettingsButton", settings);
+
+        d.WaitUntil(() => d.Find("AgentStatus").Name == "Waiting for a coding agent", "the agent panel");
+        var saved = new AiSettingsStore(Path.Combine(_profile, "settings.json")).Load();
+        Assert.True(saved.AgentsEnabled);
+        Assert.Equal([new McpServerSetting("github", "https://example.com/mcp")], saved.McpServers);
     }
 
     [Fact]
@@ -79,7 +110,7 @@ public sealed class DesktopAppTests : IDisposable
         d.Click("ApproveButton");
 
         d.WaitUntil(() => d.FindAll("AssistantMessage").Any(m => m.AsTextBox().Text.Contains("Key findings")), "findings", RunTimeout);
-        // The grid follows the files through a watcher, so it can lag the chat by a moment.
+        // The grid refreshes a moment after the bench reports a change, so it can lag the chat.
         d.WaitUntil(() => d.GridCell("RunsGrid", "R-1002", 2) == "Completed", "the run shown as Completed");
         d.WaitUntil(() => d.Find("RunVerdict").Name == "FAIL", "verdict");
         Assert.Contains("$", d.Find("UsageSummary").Name);
@@ -99,22 +130,80 @@ public sealed class DesktopAppTests : IDisposable
     }
 
     [Fact]
-    public void Changes_made_by_the_console_tool_show_up_in_the_open_app()
+    public async Task A_coding_agent_works_with_the_open_window_and_asks_there_first()
+    {
+        using var d = Launch(new AiSettings { AgentsEnabled = true });
+        await using var agent = await ConnectAgentAsync();
+
+        d.WaitUntil(() => d.Find("AgentStatus").Name == "1 coding agent connected", "the agent to show as connected");
+        Assert.Null(d.Main.FindFirstDescendant(cf => cf.ByAutomationId("ChatPanel"))); // agents don't need the assistant turned on
+
+        var plans = await agent.CallToolAsync("list_test_plans", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotEqual(true, plans.IsError); // reads don't ask
+
+        var creating = agent.CallToolAsync("create_test_plan_from_spec", NewPlan, cancellationToken: TestContext.Current.CancellationToken).AsTask();
+        var panel = d.Find("AgentPanel");
+        d.Find("ApproveButton", panel);
+        Assert.False(creating.IsCompleted);
+        Assert.Single(d.Find("PlansGrid").AsDataGridView().Rows); // nothing is created before approval
+        d.Click("ApproveButton", panel);
+
+        var created = await creating.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.NotEqual(true, created.IsError);
+        d.WaitUntil(() => d.Find("PlansGrid").AsDataGridView().Rows.Any(r => r.Cells[0].Value == "TP-1002"), "the agent's plan to appear");
+    }
+
+    [Fact]
+    public async Task A_coding_agent_is_told_when_the_user_declines()
+    {
+        using var d = Launch(new AiSettings { AgentsEnabled = true });
+        await using var agent = await ConnectAgentAsync();
+
+        var creating = agent.CallToolAsync("create_test_plan_from_spec", NewPlan, cancellationToken: TestContext.Current.CancellationToken).AsTask();
+        d.Click("DenyButton", d.Find("AgentPanel"));
+
+        var result = await creating.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.True(result.IsError);
+        Assert.Contains("declined", string.Concat(result.Content.OfType<TextContentBlock>().Select(b => b.Text)));
+        Assert.Empty(Directory.GetFiles(Path.Combine(Workspace, "plans"), "TP-1002.xml"));
+    }
+
+    [Fact]
+    public void Without_opt_in_coding_agents_cannot_connect()
     {
         using var d = Launch(new AiSettings());
 
-        using (var cli = Process.Start(new ProcessStartInfo(RepoFile(@"src\Demo.Cli\bin\{0}\net10.0\demo-cli.exe"),
-            $"--workspace \"{Workspace}\" plan from-spec LDO-3300_datasheet.csv --temps 25,125 --samples 2") { UseShellExecute = false, CreateNoWindow = true })!)
-        {
-            if (!cli.WaitForExit(TimeSpan.FromSeconds(60)))
-            {
-                cli.Kill(entireProcessTree: true);
-                Assert.Fail("demo-cli did not exit within 60 s.");
-            }
-            Assert.Equal(0, cli.ExitCode);
-        }
+        Assert.Null(d.Main.FindFirstDescendant(cf => cf.ByAutomationId("AgentPanel")));
+        var (exitCode, error) = RunRelay();
+        Assert.Equal(1, exitCode);
+        Assert.Contains("isn't letting coding agents connect", error);
+    }
 
-        d.WaitUntil(() => d.Find("PlansGrid").AsDataGridView().Rows.Any(r => r.Cells[0].Value == "TP-1002"), "the new plan to appear");
+    private static readonly Dictionary<string, object?> NewPlan = new() { ["specFile"] = "LDO-3300_datasheet.csv", ["samples"] = 2 };
+
+    /// <summary>Connects exactly as a coding agent does: it starts <c>demo-desktop.exe mcp</c>, which relays to the open window.</summary>
+    private Task<McpClient> ConnectAgentAsync() =>
+        McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+        {
+            Name = "testbench",
+            Command = DesktopExe,
+            Arguments = ["mcp", "--agent-pipe", _agentPipe],
+        }), new McpClientOptions { ClientInfo = new Implementation { Name = "Test agent", Version = "1" } },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+    private (int ExitCode, string Error) RunRelay()
+    {
+        using var relay = Process.Start(new ProcessStartInfo(DesktopExe, $"mcp --agent-pipe {_agentPipe}")
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardError = true,
+        })!;
+        var error = relay.StandardError.ReadToEndAsync();
+        if (!relay.WaitForExit(TimeSpan.FromSeconds(30)))
+        {
+            relay.Kill(entireProcessTree: true);
+            Assert.Fail("demo-desktop mcp did not exit within 30 s.");
+        }
+        return (relay.ExitCode, error.Result);
     }
 
     private static void Ask(DesktopDriver d, string question)

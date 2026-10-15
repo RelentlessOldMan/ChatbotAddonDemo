@@ -1,6 +1,6 @@
 # Security notes
 
-Scope: the in-app chat assistant (which uses the customer's own credentials) and the console tool's MCP server mode. We assume the apps run on a customer's Windows PC under a normal user account, and that other users or software may share that machine.
+Scope: the in-app chat assistant (which uses the customer's own credentials), the desktop app's MCP hub (coding agents connecting to the open app, and other MCP servers the assistant uses), and the console tool's MCP server mode. We assume the apps run on a customer's Windows PC under a normal user account, and that other users or software may share that machine.
 
 ## What we protect
 
@@ -30,6 +30,7 @@ This covers model mistakes and **prompt injection from data**, e.g. a spec sheet
 - Approval cards show each argument on one line, so a crafted value can't fake extra lines on the card.
 - Imported plan XML is parsed with DTDs turned off, numbers must be finite, and test names are replaced with the bench's own names. Text cells in `summary.csv` that start with `=`, `+`, `-`, `@`, a tab or a carriage return are prefixed with `'`, so a crafted name can't become a live spreadsheet formula.
 - Every tool call is visible in the chat transcript.
+- Tools from other MCP servers are treated the same way: see 6.
 
 ### 4. Runaway spend
 - Caps on model↔tool round trips between approvals (`MaxToolIterations`, 8) and on model requests per message (`MaxModelRequestsPerMessage`, 20) and an optional per-chat **limit** (default $1.00), checked before every model request including automatic tool round trips. Models with no known price get a token limit (default 500,000) instead.
@@ -37,53 +38,82 @@ This covers model mistakes and **prompt injection from data**, e.g. a spec sheet
 - Enterprises get hard budgets at their gateway.
 
 ### 5. Coding agents (MCP)
-- `demo-cli mcp` talks over **stdin/stdout only**: no port, no network listener. The agent starts it as the user who configured the agent, with exactly that user's permissions.
-- **Read-only by default.** `--allow-writes` and `--allow-runs` are separate opt-ins, so an admin can let agents draft plans without letting them use the bench.
-- Tools carry MCP annotations, so the agent's own permission prompts know what each tool does: `readOnlyHint` on Read tools, `idempotentHint` on Read tools and `generate_report`, `openWorldHint` on Execute tools (affects things outside the app, here the bench), and `destructiveHint` on `cancel_test_run` only.
-- The agent uses its own model subscription or API key; our tool needs no AI credentials in this path.
+**Connecting to the open desktop app** (path D1, `demo-desktop.exe mcp`):
+- **Off by default.** The user turns it on in Settings ("Let coding agents connect to this window"); IT can keep it off for everyone (`DisableAgentConnections`).
+- **No port, no network listener.** The app listens on a named pipe (`ChatbotAddonDemo.TestBench.<user name>`) whose access list allows only the current Windows user and denies network access, so neither another user nor another machine can connect. The relay, in turn, connects only to a pipe created by its own user (`PipeOptions.CurrentUserOnly`), so another user can't set up a pipe under that name to listen in. Only one window per user opens the pipe (`FirstPipeInstance`).
+- **The user approves each change in the window.** Write and Execute tools from an agent show the same approval card as the chat ("Claude Code wants to use the test bench"), whatever the agent's own permission settings say. A declined call tells the agent that nothing was changed and not to retry unless asked. Every call is listed in the window's Coding agents panel, so the user sees what the agent does.
+- **Agents see only our tools.** The hub never offers an agent the tools of other MCP servers, so an agent can't use TestBench to reach the customer's GitHub or Perforce with the user's credentials.
+- The agent's name on the card comes from the agent itself, so it's a label, not proof of who is asking. What protects the user is that every change needs their click.
 
-### 6. Data leaving the PC
+**The console tool** (path D2, `demo-cli mcp`):
+- Talks over **stdin/stdout only**: no port, no network listener. The agent starts it as the user who configured the agent, with exactly that user's permissions.
+- **Read-only by default.** `--allow-writes` and `--allow-runs` are separate opt-ins, so an admin can let agents draft plans without letting them use the bench.
+
+On both paths:
+- Tools carry MCP annotations, so the agent's own permission prompts know what each tool does: `readOnlyHint` on Read tools, `idempotentHint` on Read tools and `generate_report`, `openWorldHint` on Execute tools (affects things outside the app, here the bench), and `destructiveHint` on `cancel_test_run` only.
+- The agent uses its own model subscription or API key; our apps need no AI credentials in this path.
+
+### 6. Other MCP servers used by the assistant
+The hub can connect the chat to other MCP servers that the user or IT sets up (Perforce, GitHub…). Their tools, and what they return, are outside our control.
+- **Every call asks first** unless IT marked the server as trusted (`Trusted=1` in machine policy). A server's own `readOnlyHint` labels aren't trusted: a malicious or buggy server could put them on a tool that changes things. Servers users add are never trusted; only IT can skip the card.
+- **Results are untrusted data**, like spec sheets (see 3): they may contain prompt injection. They can't make anything happen without approval, because our own Write and Execute tools still ask, and so does every untrusted outside tool.
+- Tool names are prefixed with the server's name (`github_search_code`), so another server can't shadow one of our tools or another server's. The card names the server.
+- IT can add servers for everyone and stop users adding their own (`DisableUserMcpServers`). A user's server can't take the name of an IT server.
+- A command-line server runs as the user, with the user's rights and credentials. That's the same trust the user gives any program they run; IT can restrict it with `DisableUserMcpServers` or AppLocker / WDAC.
+- Addresses must use https (plain http only to this PC). A server that fails or doesn't answer within 30 seconds is skipped and reported in the chat.
+
+### 7. Data leaving the PC
 
 ```mermaid
 flowchart LR
     subgraph pc["The customer's PC"]
         direction TB
-        ab["A: screens · B: console commands"]
-        chat["C: chat panel"]
-        mcp["demo-cli mcp"]
+        subgraph desktop["Desktop app"]
+            a["A: screens"]
+            chat["C: chat panel"]
+            hub["MCP hub"]
+        end
+        subgraph cli["Console tool"]
+            b["B: commands"]
+            mcp["demo-cli mcp"]
+        end
         agent["D: coding agent<br/>Claude Code / Codex"]
-        ws[("Workspace files")]
     end
     prov["💲 Claude / OpenAI,<br/>or the company AI gateway"]
     agentprov["💲 The agent's AI provider"]
+    outside["Other MCP servers<br/>(GitHub, Perforce…)"]
 
-    ab --- ws
+    chat --- hub
     chat == "the customer's key or gateway token<br/>+ the whole conversation: questions,<br/>tool results, earlier answers" ==> prov
-    mcp -- "tool results over stdin/stdout<br/>(stays on the PC)" --> agent
+    hub -- "D1: tool results over a<br/>named pipe (stays on the PC)" --- agent
+    mcp -- "D2: tool results over stdin/stdout<br/>(stays on the PC)" --> agent
     agent == "the agent's context,<br/>including our tool results" ==> agentprov
+    hub == "call arguments,<br/>if the user adds a server" ==> outside
 
     classDef paid fill:#fff1c2,stroke:#d97706,color:#000
     class prov,agentprov paid
 ```
 <sub>[Download this diagram as PNG](images/diagrams/security--data-leaving-the-pc.png)</sub> <!-- diagram-png -->
 
-Thick arrows are the only traffic that leaves the PC. Paths A and B send nothing anywhere.
+Thick arrows are the only traffic that leaves the PC. Paths A and B send nothing anywhere. The two apps never talk to each other.
 
 - Turning on the assistant shows a plain-language note: what is sent, to whom, and who pays.
 - Nothing is sent until the user enables the assistant *and* sends a message. There's no background traffic.
 - The analysis tools return summaries, so raw measurement data usually doesn't need to be sent at all ([ADR-006](adr/006-model-orchestrates-app-computes.md)).
 - Gateway customers can apply their own data-loss-prevention checks, retention and logging.
 - In the chat panel (path C), every request carries the whole conversation so far, including earlier tool results such as spec limits and run findings.
-- **Coding agents (path D):** our tool results enter the agent's context and go to the agent's AI provider, under the agent user's terms with that provider. Our console tool itself never calls a model and sends nothing over the network.
+- **Coding agents (paths D1 and D2):** our tool results enter the agent's context and go to the agent's AI provider, under the agent user's terms with that provider. Neither app calls a model for an agent or sends anything over the network for it.
+- **Other MCP servers:** each call's arguments go to that server, and its results join the chat, so they go to the chat's provider with the next request. A command-line server may itself send data wherever it's built to; that's between the customer and that server.
 
-### 7. Demo-only parts
-`--demo --snapshot-pipe <name>` starts a named pipe that the screenshot tool uses to render windows. It exists only with both options, is restricted to the current user (`PipeOptions.CurrentUserOnly`), and runs against a throwaway profile. A shipping build should leave it out.
+### 8. Demo-only parts
+`--demo --snapshot-pipe <name>` starts a named pipe that the screenshot tool uses to render windows. It exists only with both options, is restricted to the current user (`PipeOptions.CurrentUserOnly`), and runs against a throwaway profile. A shipping build should leave it out. `--agent-pipe <name>` gives the agent pipe another name, so tests and screenshots never reach the user's open TestBench; it changes nothing else.
 
 ## Not built, and what it would need
 
-**MCP inside the desktop app** ([design §8](design.md#8-optional-not-built-mcp-inside-the-desktop-app)) would add a listening port. Before shipping it you'd need: binding to `127.0.0.1` only; a random per-install bearer token compared in constant time and stored with DPAPI; rejecting requests whose `Host` or `Origin` isn't loopback (DNS-rebinding defense against web pages); off by default; a visible "agent connected" indicator; and one-click token rotation.
+**Agents over HTTP** (for agents that can't start a local program) would add a listening port. Before shipping it you'd need: binding to `127.0.0.1` only; a random per-install bearer token compared in constant time and stored with DPAPI; rejecting requests whose `Host` or `Origin` isn't loopback (DNS-rebinding defense against web pages); off by default; and one-click token rotation. The named pipe needs none of this, because Windows checks who connects.
 
 ## Out of scope for the demo (do these in a product)
 - Code signing, and checking that the exe an agent starts is the signed one.
 - An audit log of AI-initiated actions. Today they are visible in the transcript but not saved.
-- IT-managed policy per capability (e.g. "agents may never run the bench" enforced by Group Policy, not just by flags).
+- IT-managed policy per capability (e.g. "agents may never run the bench" enforced by Group Policy). Today IT can turn agent connections off as a whole, and the user approves each change.
+- Sign-in for remote MCP servers (OAuth). Today an `https://` server must work without it, or through the company network's own identity.

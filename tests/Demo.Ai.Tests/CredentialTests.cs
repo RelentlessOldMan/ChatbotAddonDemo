@@ -192,9 +192,18 @@ public class CredentialTests
         try
         {
             var store = new AiSettingsStore(path);
-            store.Save(new AiSettings { ChatEnabled = true, Provider = AiProvider.OpenAI, Models = { [AiProvider.OpenAI] = "gpt-x" } });
+            store.Save(new AiSettings
+            {
+                ChatEnabled = true,
+                Provider = AiProvider.OpenAI,
+                Models = { [AiProvider.OpenAI] = "gpt-x" },
+                AgentsEnabled = true,
+                McpServers = [new("github", "npx -y @modelcontextprotocol/server-github")],
+            });
             var loaded = store.Load();
             Assert.True(loaded.ChatEnabled);
+            Assert.True(loaded.AgentsEnabled);
+            Assert.Equal(new McpServerSetting("github", "npx -y @modelcontextprotocol/server-github"), Assert.Single(loaded.McpServers));
             Assert.Equal("gpt-x", loaded.ModelFor(AiProvider.OpenAI));
             Assert.Equal("claude-opus-5-5", loaded.ModelFor(AiProvider.Anthropic));
 
@@ -213,6 +222,8 @@ public class CredentialTests
     [InlineData("""{ "ChatEnabled": true, "Models": null }""")]
     [InlineData("""{ "ChatEnabled": true, "Models": { "OpenAI": null } }""")]
     [InlineData("""{ "ChatEnabled": true, "SessionSpendCapUsd": -5 }""")]
+    [InlineData("""{ "ChatEnabled": true, "McpServers": null }""")]
+    [InlineData("""{ "ChatEnabled": true, "McpServers": [ null, { "Name": "github" } ] }""")]
     [InlineData("null")]
     public void Damaged_settings_load_as_something_usable(string json)
     {
@@ -225,6 +236,7 @@ public class CredentialTests
             Assert.Equal(ProviderInfo.For(loaded.Provider).DefaultModel, loaded.ModelFor(loaded.Provider)); // doesn't throw
             Assert.Equal("gpt-6-astra", loaded.ModelFor(AiProvider.OpenAI));
             Assert.True(loaded.SessionSpendCapUsd is null or > 0);
+            Assert.Empty(loaded.McpServers);
         }
         finally
         {
@@ -328,6 +340,28 @@ public class CredentialTests
         var resolved = Resolver(store, new FakePolicy(gateway: multiString)).Resolve(AiProvider.Anthropic);
         Assert.False(resolved.IsAvailable);
         Assert.Contains("isn't a valid address", resolved.Problem);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData("1", true)]
+    [InlineData(0, false)]
+    [InlineData(null, false)]
+    [InlineData(new byte[] { 1 }, false)] // trust loosens the rules, so a value of an odd type is a "no"
+    public void Only_a_clear_yes_from_IT_marks_an_MCP_server_safe(object? value, bool trusted) =>
+        Assert.Equal(trusted, RegistryMachinePolicy.McpServer("perforce", "p4mcp.exe", value).Trusted);
+
+    [Fact]
+    public void An_MCP_server_command_of_the_wrong_registry_type_is_kept_so_it_can_be_reported() =>
+        Assert.Equal(new PolicyMcpServer("perforce", null, false), RegistryMachinePolicy.McpServer("perforce", new[] { "p4mcp.exe" }, null));
+
+    [Fact]
+    public void Without_policy_agents_and_personal_MCP_servers_are_allowed()
+    {
+        IMachinePolicy none = NoMachinePolicy.Instance;
+        Assert.False(none.DisableAgentConnections);
+        Assert.False(none.DisableUserMcpServers);
+        Assert.Empty(none.McpServers);
     }
 
     [Fact]

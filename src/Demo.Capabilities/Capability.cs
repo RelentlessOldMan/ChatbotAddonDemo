@@ -36,4 +36,7 @@ public sealed record Capability(AIFunction Function, SafetyClass Safety, string 
 {
     public string Name => Function.Name;
     public string Description => Function.Description;
+
+    /// <summary>The outside MCP server this tool belongs to (e.g. "github"); null for the app's own capabilities.</summary>
+    public string? Server { get; init; }
 }

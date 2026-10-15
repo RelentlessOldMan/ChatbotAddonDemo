@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Windows: path D1 reaches the desktop app over a Windows named pipe. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -21,8 +22,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Demo.Ai\Demo.Ai.csproj" />
-    <!-- Builds demo-cli first (paths B and D start the real exe from its own folder; see Paths.cs) and brings the MCP client. -->
-    <ProjectReference Include="..\..\src\Demo.Cli\Demo.Cli.csproj" />
+    <!-- The hub (paths C and D1) and the MCP client. -->
+    <ProjectReference Include="..\..\src\Demo.Mcp\Demo.Mcp.csproj" />
+    <!-- Build order only: paths B and D2 start the real demo-cli.exe, and D1 the real demo-desktop.exe, from their own folders (see Paths.cs). -->
+    <ProjectReference Include="..\..\src\Demo.Cli\Demo.Cli.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Demo.Desktop\Demo.Desktop.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

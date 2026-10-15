@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <!-- Demo.Ai brings Demo.Capabilities and Demo.Domain with it. No MCP: agents use the console tool. -->
+    <!-- Demo.Ai and Demo.Mcp (the hub) bring Demo.Capabilities and Demo.Domain with them. -->
     <ProjectReference Include="..\Demo.Ai\Demo.Ai.csproj" />
+    <ProjectReference Include="..\Demo.Mcp\Demo.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

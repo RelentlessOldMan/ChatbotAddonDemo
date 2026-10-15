@@ -13,13 +13,13 @@ We want two AI integrations: an in-app chat assistant (desktop app) and coding a
 ## Decision
 Option 3. The tools for AI (capability catalog) live in `Demo.Capabilities`. Each one is declared once: name, description written for models, typed parameters (which become the JSON schema), and a safety class:
 
-| Safety class | Meaning | Chat panel | MCP |
+| Safety class | Meaning | Desktop app (chat panel and connected agents) | Console tool's MCP (`demo-cli mcp`) |
 |---|---|---|---|
-| `Read` | Only looks | Runs automatically (but a lookup asked for in the same step as a change also gets an approval card) | Always exposed; `readOnlyHint`, `idempotentHint` |
+| `Read` | Only looks | Runs automatically (but in the chat, a lookup asked for in the same step as a change also gets an approval card) | Always exposed; `readOnlyHint`, `idempotentHint` |
 | `Write` | Creates or changes files (plans, reports) | Needs approval | Only with `--allow-writes`; `generate_report` also `idempotentHint` |
 | `Execute` | Acts on the outside world (here, the bench hardware) | Needs approval | Only with `--allow-runs`; `openWorldHint`, and `destructiveHint` for `cancel_test_run` |
 
-The catalog produces `AIFunction`s. The chat panel uses them directly, and the console tool's MCP server wraps the same objects with `McpServerTool.Create`.
+The catalog produces `AIFunction`s, and MCP servers wrap the same objects with `McpServerTool.Create`, with annotations from the safety class: the console tool's `demo-cli mcp`, and the desktop app's MCP hub, which serves them to the chat panel and to coding agents connected to the open app ([ADR-007](007-mcp-hub-in-the-desktop-app.md)).
 
 The existing UI and console commands keep calling the domain logic directly; the catalog is the *AI-facing* adapter, not a new layer that people's paths must go through.
 

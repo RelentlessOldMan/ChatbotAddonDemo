@@ -27,9 +27,10 @@
     <!-- Same driver the screenshot tool uses. -->
     <Compile Include="..\..\tools\Demo.Screenshots\DesktopDriver.cs" Link="DesktopDriver.cs" />
     <ProjectReference Include="..\..\src\Demo.Ai\Demo.Ai.csproj" />
+    <!-- For the MCP client the coding-agent tests connect with. -->
+    <ProjectReference Include="..\..\src\Demo.Mcp\Demo.Mcp.csproj" />
     <!-- Build order only: the tests launch the app's exe. -->
     <ProjectReference Include="..\..\src\Demo.Desktop\Demo.Desktop.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\src\Demo.Cli\Demo.Cli.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

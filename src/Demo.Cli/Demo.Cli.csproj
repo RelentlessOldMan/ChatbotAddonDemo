@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\Demo.Capabilities\Demo.Capabilities.csproj" />
+    <!-- Demo.Mcp brings Demo.Capabilities, Demo.Domain and the MCP SDK with it. -->
+    <ProjectReference Include="..\Demo.Mcp\Demo.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Only for `demo-cli mcp`: the MCP server SDK and the host it runs in. -->
+    <!-- Only for `demo-cli mcp`: the host the MCP server runs in. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
   </ItemGroup>
 
   <PropertyGroup>

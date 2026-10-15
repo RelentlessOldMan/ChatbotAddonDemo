@@ -53,10 +53,20 @@ When the run finishes, it reports the findings:
 - Long chats get more expensive per message, because the conversation so far is sent each time. Click **New chat** when you change topic.
 - The **spending limit** is checked before every request the assistant sends. If the next request would likely go over, it isn't sent and the assistant tells you. The cost is an estimate, so the total can end up above or below the limit; one unusually long reply can go over by up to about $0.30.
 
+## Using other tools: Perforce, GitHub and more
+The assistant can also use other MCP servers (MCP is the standard way AI plugs in outside tools), for example to look up a changelist or file an issue. Your IT department may have set some up already; they're listed in Settings under **Other MCP servers for the assistant**. To add your own, click **Add a server**, give it a short name such as `github`, and enter the command that starts it or its `https://` address. (If IT has turned this off, Settings says so.)
+
+![Other MCP servers and coding agents in Settings](../images/10-settings-agents-and-servers.png)
+
+- Every use of another server's tool asks you first ("The assistant wants to use github"), unless IT has marked that server as trusted.
+- A server that can't be reached is mentioned in the chat, and the assistant carries on without it.
+- 💲 What those tools return becomes part of the chat, so it's sent to your AI provider with your next message, like everything else in the chat. Large results cost more.
+- A server you add by command runs on your PC with your Windows rights. Only add servers you trust.
+
 ## Where do the numbers come from?
 TestBench calculates every number itself (pass/fail, statistics, drift) from the measurement files. The assistant chooses which analysis to run and explains the result. It doesn't do the maths, so the numbers it quotes match the report and the CSV files.
 
 ## Privacy
 Your questions, and the data needed to answer them (for example a plan's limits or a run's findings), are sent to the provider you picked. Nothing is sent until you ask something. Your key is encrypted so only your Windows account on this PC can use it. Click **Remove** in Settings to delete it.
 
-*Using Claude Code or Codex? You don't need this panel. See [Connecting a coding agent](connecting-a-coding-agent.md).*
+*Using Claude Code or Codex? You don't need this panel: your agent can work with the TestBench window you have open, and asks you there before changing anything. See [Connecting a coding agent](connecting-a-coding-agent.md).*

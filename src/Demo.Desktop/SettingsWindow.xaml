@@ -10,7 +10,7 @@
         </Grid.RowDefinitions>
 
         <Border Margin="12,12,12,0" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="SettingsScroller">
                     <StackPanel Margin="18,14">
                         <CheckBox IsChecked="{Binding ChatEnabled}" FontWeight="SemiBold" FontSize="14"
                                   AutomationProperties.AutomationId="ChatEnabledCheckBox" Content="Enable the AI assistant"/>
@@ -78,11 +78,55 @@
                                    Visibility="{Binding SpendCapError, Converter={StaticResource NonEmptyToVis}}"
                                    AutomationProperties.AutomationId="SpendCapError"/>
 
-                        <TextBlock Text="USING CLAUDE CODE OR CODEX?" Style="{StaticResource SectionLabel}" Margin="0,22,0,4"/>
+                        <TextBlock Text="OTHER MCP SERVERS FOR THE ASSISTANT" Style="{StaticResource SectionLabel}" Margin="0,22,0,4"/>
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}">
-                            Coding agents don't use this assistant or its key. They connect to the console tool, which they start themselves:
-                            <Run FontFamily="Consolas" Foreground="{StaticResource Chrome}">demo-cli mcp</Run>. See "Connecting a coding agent" in the docs.
+                            The assistant can also use the tools of other MCP servers, such as Perforce, GitHub or Microsoft 365. Give each a short name,
+                            and the command that starts it or its https address. It asks before every use of their tools.
                         </TextBlock>
+                        <ItemsControl ItemsSource="{Binding PolicyServers}" Margin="0,6,0,0" Visibility="{Binding HasPolicyServers, Converter={StaticResource BoolToVis}}"
+                                      AutomationProperties.AutomationId="PolicyServers">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StringFormat='Set up by your IT department · {0}'}" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <StackPanel Visibility="{Binding UserServersAllowed, Converter={StaticResource BoolToVis}}">
+                            <ItemsControl ItemsSource="{Binding McpServers}" Margin="0,6,0,0" AutomationProperties.AutomationId="McpServerList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="0,3">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource PlainButton}" Content="Remove" Margin="6,0,0,0"
+                                                    Command="{Binding DataContext.RemoveServerCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" AutomationProperties.AutomationId="RemoveServerButton"/>
+                                            <TextBox DockPanel.Dock="Left" Width="110" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="A short name, e.g. github" AutomationProperties.Name="Server name" AutomationProperties.AutomationId="ServerNameBox"/>
+                                            <TextBox Margin="6,0,0,0" Text="{Binding Command, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="The command that starts it, or its https address" AutomationProperties.Name="Server command or address" AutomationProperties.AutomationId="ServerCommandBox"/>
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button Style="{StaticResource PlainButton}" Content="Add a server" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                    Command="{Binding AddServerCommand}" AutomationProperties.AutomationId="AddServerButton"/>
+                            <TextBlock Text="{Binding McpServersError}" Foreground="{StaticResource Bad}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding McpServersError, Converter={StaticResource NonEmptyToVis}}"
+                                       AutomationProperties.AutomationId="McpServersError"/>
+                        </StackPanel>
+                        <TextBlock Text="Your IT department allows only the servers it set up." Foreground="{StaticResource Muted}" Margin="0,6,0,0"
+                                   Visibility="{Binding UserServersBlocked, Converter={StaticResource BoolToVis}}"/>
+
+                        <TextBlock Text="CODING AGENTS" Style="{StaticResource SectionLabel}" Margin="0,22,0,4"/>
+                        <CheckBox IsChecked="{Binding AgentsEnabled}" IsEnabled="{Binding CanChangeAgents}" FontWeight="SemiBold"
+                                  AutomationProperties.AutomationId="AgentsEnabledCheckBox" Content="Let coding agents connect to this window"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,6,0,0">
+                            Claude Code, Codex and other agents can then work with the plans and the bench you have open here. They use their own AI
+                            and their own account, not this assistant or its key, and don't need it turned on. Set the agent up to start
+                            <Run FontFamily="Consolas" Foreground="{StaticResource Chrome}">demo-desktop.exe mcp</Run>; it asks you here before it creates
+                            files or uses the bench. See "Connecting a coding agent" in the docs.
+                        </TextBlock>
+                        <TextBlock Text="Your IT department has turned this off." Foreground="{StaticResource Muted}" Margin="0,4,0,0"
+                                   Visibility="{Binding AgentsBlockedByPolicy, Converter={StaticResource BoolToVis}}"/>
                     </StackPanel>
                 </ScrollViewer>
         </Border>

@@ -159,7 +159,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Usage: demo-cli", result.Output);
         Assert.Contains("DEMO_WORKSPACE", result.Output);
-        Assert.Contains(@"%LOCALAPPDATA%\ChatbotAddonDemo\workspace", result.Output);
+        Assert.Contains(@"%LOCALAPPDATA%\ChatbotAddonDemoCli\workspace", result.Output);
         Assert.False(Directory.Exists(_workspace), "help must not open (and seed) the workspace");
     }
 

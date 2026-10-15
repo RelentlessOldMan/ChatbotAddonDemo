@@ -17,5 +17,6 @@ public partial class MainWindow : Window
             // A key saved or removed in the dialog is already in effect, even if the dialog is then cancelled.
             if (dialog.ShowDialog() == true || settings.CredentialsChanged) viewModel.ApplySettings(settings.CredentialsChanged);
         };
+        Closed += (_, _) => viewModel.Shutdown();
     }
 }

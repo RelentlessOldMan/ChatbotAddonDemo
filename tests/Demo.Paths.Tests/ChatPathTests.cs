@@ -3,6 +3,7 @@ using Demo.Ai.Credentials;
 using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
 using Demo.Domain;
+using Demo.Mcp;
 
 namespace Demo.Paths.Tests;
 
@@ -11,11 +12,12 @@ namespace Demo.Paths.Tests;
 /// Claude or OpenAI SDK → HTTP → a fake gateway with a scripted model → tool calls → approvals → core logic → files.
 /// Free: the gateway runs on 127.0.0.1.
 /// </summary>
-public sealed class ChatPathTests : IDisposable
+public sealed class ChatPathTests : IAsyncDisposable
 {
     private const string GatewayToken = "test-gateway-token";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "paths-tests", Guid.NewGuid().ToString("N"));
     private readonly List<string> _approvalsAsked = [];
+    private HubTools? _tools;
 
     private sealed class GatewayPolicy(Uri url) : IMachinePolicy
     {
@@ -24,7 +26,7 @@ public sealed class ChatPathTests : IDisposable
         public bool DisableUserKeys => true;
     }
 
-    private (ChatSession Session, IDisposable Client) Connect(AiProvider provider, FakeAiGateway gateway, decimal? limitUsd = 1.00m, long unpricedTokenLimit = 500_000)
+    private async Task<(ChatSession Session, IDisposable Client)> Connect(AiProvider provider, FakeAiGateway gateway, decimal? limitUsd = 1.00m, long unpricedTokenLimit = 500_000)
     {
         // Exactly what the desktop app does, with the gateway set by policy (so no personal key can be used).
         var credential = new CredentialResolver(new InMemoryCredentialStore(), new GatewayPolicy(gateway.BaseUrl), _ => "must-not-be-used")
@@ -33,8 +35,9 @@ public sealed class ChatPathTests : IDisposable
 
         var model = ProviderInfo.For(provider).DefaultModel;
         var client = ChatClientFactory.Create(provider, model, credential);
-        var bench = new TestBenchService(_workspace, BenchOptions.Instant);
-        var session = new ChatSession(client, CapabilityCatalog.FromObject(new TestBenchCapabilities(bench)), new UsageMeter(model, limitUsd, tokenLimitWhenUnpriced: unpricedTokenLimit),
+        // The tools through the hub (C3), as the chat panel gets them.
+        _tools = await Paths.DesktopHub(_workspace).ConnectChatAsync([], TestContext.Current.CancellationToken);
+        var session = new ChatSession(client, _tools.Catalog, new UsageMeter(model, limitUsd, tokenLimitWhenUnpriced: unpricedTokenLimit),
             ChatSessionOptions.For(TestBenchCapabilities.Instructions));
         return (session, client);
     }
@@ -51,7 +54,7 @@ public sealed class ChatPathTests : IDisposable
     public async Task The_whole_job_runs_through_the_real_SDK_and_the_gateway(AiProvider provider)
     {
         await using var gateway = await FakeAiGateway.StartAsync(Scenario.ScriptedModel);
-        var (session, client) = Connect(provider, gateway);
+        var (session, client) = await Connect(provider, gateway);
         using var _ = client;
 
         var turn = await session.SendAsync(Scenario.Question, Answer(true), TestContext.Current.CancellationToken);
@@ -59,7 +62,7 @@ public sealed class ChatPathTests : IDisposable
         // The user was asked about the two actions that change something, and nothing else.
         Assert.Equal(["create_test_plan_from_spec", "start_test_run"], _approvalsAsked);
 
-        // The work really happened, in the workspace every path shares.
+        // The work really happened, in the workspace.
         var bench = new TestBenchService(_workspace, BenchOptions.Instant);
         var plan = Assert.Single(bench.ListPlans(), p => p.Id == "TP-1002");
         Assert.Equal(Scenario.Measurements, plan.MeasurementCount);
@@ -99,7 +102,7 @@ public sealed class ChatPathTests : IDisposable
     public async Task Deny_means_nothing_is_created_and_the_model_is_told(AiProvider provider)
     {
         await using var gateway = await FakeAiGateway.StartAsync(Scenario.ScriptedModel);
-        var (session, client) = Connect(provider, gateway);
+        var (session, client) = await Connect(provider, gateway);
         using var _ = client;
 
         var turn = await session.SendAsync(Scenario.Question, Answer(false), TestContext.Current.CancellationToken);
@@ -118,7 +121,7 @@ public sealed class ChatPathTests : IDisposable
     {
         await using var gateway = await FakeAiGateway.StartAsync(Scenario.ScriptedModel);
         // Models without a price in the table (the OpenAI ones, for now) are limited by tokens instead of dollars.
-        var (session, client) = Connect(provider, gateway, limitUsd: 0.0001m, unpricedTokenLimit: 100);
+        var (session, client) = await Connect(provider, gateway, limitUsd: 0.0001m, unpricedTokenLimit: 100);
         using var _ = client;
 
         await Assert.ThrowsAsync<SpendCapExceededException>(() =>
@@ -127,8 +130,9 @@ public sealed class ChatPathTests : IDisposable
         Assert.Empty(gateway.Received);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        if (_tools is not null) await _tools.DisposeAsync();
         try { Directory.Delete(_workspace, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }

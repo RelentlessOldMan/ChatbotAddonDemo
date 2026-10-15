@@ -92,6 +92,10 @@ public sealed class DesktopDriver : IDisposable
     public string GridCell(string gridId, string key, int column) =>
         Find(gridId).AsDataGridView().Rows.First(r => r.Cells[0].Value == key).Cells[column].Value;
 
+    /// <summary>Scrolls a scroll viewer to the bottom, so a capture shows its last part.</summary>
+    public void ScrollToEnd(string automationId, AutomationElement? root = null) =>
+        Find(automationId, root).Patterns.Scroll.Pattern.SetScrollPercent(-1, 100); // -1: leave the horizontal position
+
     public Window WaitForModal(string automationId) =>
         Retry.WhileNull(() => Main.ModalWindows.FirstOrDefault(w => w.AutomationId == automationId), DefaultTimeout, throwOnTimeout: true,
             timeoutMessage: $"Modal '{automationId}' did not open").Result!;

@@ -8,36 +8,32 @@ using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Demo.Domain;
+using Demo.Mcp;
 using Microsoft.Win32;
 
 namespace Demo.Desktop.ViewModels;
 
-/// <summary>The "legacy" main window. The AI pieces are additive: Chat is null until opted in.</summary>
+/// <summary>The "legacy" main window. The AI pieces are additive: Chat is null until opted in, and agents can't connect until allowed.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
     private static readonly string[] TabNames = ["Test plans", "Runs", "Spec sheets"];
 
     private readonly AppServices _services;
     private readonly DispatcherTimer _refreshTimer;
-    private readonly FileSystemWatcher _watcher;
     private readonly HashSet<string> _knownRunIds = [];
     private TestRun? _shownRun;
+    private AgentDoor? _agentDoor;
 
     public MainViewModel(AppServices services)
     {
         _services = services;
+        Agents = new AgentPanelViewModel(Application.Current.Dispatcher);
 
-        // Changes arrive from the assistant, the bench thread, or another program (the console tool or a
-        // coding agent) writing to the same workspace. All of them just schedule a refresh from disk.
+        // Changes arrive from the screens, the bench thread, the assistant or a coding agent. All of them go through
+        // this app's own bench service (AI through the hub), whose Changed event schedules a refresh from disk.
         _refreshTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) => { _refreshTimer!.Stop(); Refresh(); }, Application.Current.Dispatcher);
         _refreshTimer.Stop();
         services.Bench.Changed += (_, _) => ScheduleRefresh();
-        _watcher = new FileSystemWatcher(services.Bench.Workspace) { IncludeSubdirectories = true, EnableRaisingEvents = true };
-        _watcher.Created += (_, _) => ScheduleRefresh();
-        _watcher.Changed += (_, _) => ScheduleRefresh();
-        _watcher.Renamed += (_, _) => ScheduleRefresh();
-        _watcher.Deleted += (_, _) => ScheduleRefresh();
-        _watcher.Error += (_, _) => ScheduleRefresh(); // e.g. buffer overflow: events were lost, so re-read everything
 
         Refresh(initial: true);
         ApplySettings();
@@ -139,15 +135,25 @@ public sealed partial class MainViewModel : ObservableObject
     // ---- Assistant ----------------------------------------------------------------------------
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsChatVisible), nameof(IsChatAvailable))]
+    [NotifyPropertyChangedFor(nameof(IsChatVisible), nameof(IsChatAvailable), nameof(IsSidePanelVisible))]
     private ChatViewModel? _chat;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsChatVisible))]
+    [NotifyPropertyChangedFor(nameof(IsChatVisible), nameof(IsSidePanelVisible))]
     private bool _isChatOpen = true;
 
     public bool IsChatAvailable => Chat is not null;
     public bool IsChatVisible => Chat is not null && IsChatOpen;
+
+    // ---- Coding agents (through the hub's agent door) ----------------------------------------
+
+    public AgentPanelViewModel Agents { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSidePanelVisible))]
+    private bool _isAgentPanelVisible;
+
+    public bool IsSidePanelVisible => IsChatVisible || IsAgentPanelVisible;
 
     partial void OnSelectedTabIndexChanged(int value) => _services.Selection.ActiveTab = TabNames[Math.Clamp(value, 0, TabNames.Length - 1)];
 
@@ -157,22 +163,61 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void OpenSettings() => SettingsRequested?.Invoke();
 
-    private string? _appliedSettings;
+    private string? _appliedChatSettings;
 
     /// <summary>
     /// Re-reads settings after the Settings dialog closes: shows or hides the assistant, or starts it afresh with
-    /// the new provider, model, key or limit. If nothing changed, the conversation is kept.
+    /// the new provider, model, key, limit or outside servers (if none of those changed, the conversation is kept),
+    /// and opens or closes the door for coding agents.
     /// </summary>
     public void ApplySettings(bool credentialsChanged = false)
     {
         var settings = _services.Settings.Load();
-        var applied = System.Text.Json.JsonSerializer.Serialize(settings); // AiSettings holds a dictionary, which records compare by reference
-        if (applied == _appliedSettings && !credentialsChanged) return;
-        _appliedSettings = applied;
+        ApplyAgentSettings(_services.AgentsAllowed(settings));
+
+        // Serialized, because AiSettings holds collections, which records compare by reference.
+        var chatSettings = System.Text.Json.JsonSerializer.Serialize(settings with { AgentsEnabled = false });
+        if (chatSettings == _appliedChatSettings && !credentialsChanged) return;
+        _appliedChatSettings = chatSettings;
 
         Chat?.Shutdown(); // the old panel's request, if any, must not keep running (or billing) in the background
         Chat = settings.ChatEnabled ? new ChatViewModel(_services, settings, OpenSettings) : null;
         IsChatOpen = true;
+    }
+
+    private void ApplyAgentSettings(bool allowed)
+    {
+        IsAgentPanelVisible = allowed;
+        if (allowed && _agentDoor is null && Agents.Problem is null)
+        {
+            try
+            {
+                _agentDoor = _services.Hub.OpenAgentDoor(_services.AgentPipeName, Agents);
+            }
+            catch (IOException ex)
+            {
+                Agents.Problem = ex.Message; // e.g. another TestBench window already lets agents connect
+            }
+        }
+        else if (!allowed)
+        {
+            CloseAgentDoor();
+            Agents.Reset();
+        }
+    }
+
+    private void CloseAgentDoor()
+    {
+        if (_agentDoor is not { } door) return;
+        _agentDoor = null;
+        _ = door.DisposeAsync().AsTask(); // ends every agent's conversation; their pending cards are cancelled
+    }
+
+    /// <summary>The window is closing: nothing may keep running for an AI in the background.</summary>
+    public void Shutdown()
+    {
+        Chat?.Shutdown();
+        CloseAgentDoor();
     }
 
     // ---- Refresh --------------------------------------------------------------------------------
@@ -190,7 +235,7 @@ public sealed partial class MainViewModel : ObservableObject
         Replace(Runs, bench.ListRuns(), r => r);           // runs change as they progress
         Replace(Specs, bench.ListSpecs(), s => s.FileName);
 
-        // A run that just started (from the UI, the assistant or the console tool): bring it into view.
+        // A run that just started (from the screens, the assistant or a coding agent): bring it into view.
         var started = Runs.LastOrDefault(r => r.Status == RunStatus.Running && !_knownRunIds.Contains(r.Id));
         foreach (var r in Runs) _knownRunIds.Add(r.Id);
         if (started is not null && !initial)

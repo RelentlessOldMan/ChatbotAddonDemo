@@ -84,7 +84,9 @@ public static class Program
 
     private static void CaptureDesktop(string exe, string profile, string workspace, string outDir)
     {
-        using var d = DesktopDriver.Launch(exe, "--demo", "--profile", profile, "--workspace", workspace);
+        // Agents reach this copy of the app under a name of its own, never the user's open TestBench.
+        var agentPipe = "ChatbotAddonDemo.Screenshots." + Guid.NewGuid().ToString("N");
+        using var d = DesktopDriver.Launch(exe, "--demo", "--profile", profile, "--workspace", workspace, "--agent-pipe", agentPipe);
         string Shot(string name) => Path.Combine(outDir, name);
         var runTimeout = TimeSpan.FromSeconds(40);
 
@@ -133,6 +135,47 @@ public static class Program
 
         // 9. One of the real output files, as the bench wrote it.
         File.Copy(Path.Combine(workspace, "runs", "R-1002", "plots", "IQ.png"), Shot("09-output-plot-iq.png"), overwrite: true);
+
+        // 10. Let coding agents work with this window, and give the assistant another MCP server. The server is only
+        // shown: it's removed again before saving, as the demo has nothing to connect to.
+        d.Click("SettingsButton");
+        settings = d.WaitForModal("SettingsWindow");
+        d.SetChecked("AgentsEnabledCheckBox", true, settings);
+        d.Click("AddServerButton", settings);
+        d.Type("ServerNameBox", "github", settings);
+        d.Type("ServerCommandBox", "https://api.githubcopilot.com/mcp/", settings);
+        d.ScrollToEnd("SettingsScroller", settings);
+        d.Capture(settings, Shot("10-settings-agents-and-servers.png"));
+        d.Click("RemoveServerButton", settings);
+        d.Click("SaveSettingsButton", settings);
+
+        // 11. A coding agent connects through `demo-desktop.exe mcp` (here an MCP client standing in for Claude Code):
+        // it looks around on its own, and its change waits for approval in the window.
+        d.WaitUntil(() => d.Find("AgentStatus").Name == "Waiting for a coding agent", "the agent panel");
+        using var timeout = new CancellationTokenSource(McpTimeout);
+        var agent = Task.Run(() => McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+        {
+            Name = "testbench",
+            Command = exe,
+            Arguments = ["mcp", "--agent-pipe", agentPipe],
+        }), new McpClientOptions { ClientInfo = new Implementation { Name = "claude-code", Title = "Claude Code", Version = "1" } }, cancellationToken: timeout.Token)).GetAwaiter().GetResult();
+        try
+        {
+            Task.Run(() => agent.CallToolAsync("get_current_view", cancellationToken: timeout.Token).AsTask()).GetAwaiter().GetResult();
+            Task.Run(() => agent.CallToolAsync("list_spec_files", cancellationToken: timeout.Token).AsTask()).GetAwaiter().GetResult();
+            var creating = Task.Run(() => agent.CallToolAsync("create_test_plan_from_spec",
+                new Dictionary<string, object?> { ["specFile"] = "LDO-3300_rev-B_targets.json", ["samples"] = 3, ["temperaturesC"] = new[] { 25, 125 } },
+                cancellationToken: timeout.Token).AsTask());
+            var panel = d.Find("AgentPanel");
+            d.Find("ApproveButton", panel);
+            d.Capture(d.Main, Shot("11-agent-approval.png"));
+            d.Click("ApproveButton", panel);
+            if (creating.GetAwaiter().GetResult().IsError == true) throw new InvalidOperationException("The agent's plan wasn't created.");
+        }
+        finally
+        {
+            Task.Run(() => agent.DisposeAsync().AsTask()).GetAwaiter().GetResult();
+        }
     }
 
     private static void CaptureConsole(string cliExe, string outDir)
@@ -156,7 +199,7 @@ public static class Program
         {
             TryDelete(workspace);
         }
-        RunOnSta(() => TerminalImage.Save("demo-cli: the console tool, no AI involved", text.ToString(), Path.Combine(outDir, "10-console-tool.png"), width: 1180));
+        RunOnSta(() => TerminalImage.Save("demo-cli: the console tool, no AI involved", text.ToString(), Path.Combine(outDir, "12-console-tool.png"), width: 1180));
     }
 
     private static async Task CaptureCliMcpAsync(string cliExe, string outDir)
@@ -214,7 +257,7 @@ public static class Program
         {
             TryDelete(workspace);
         }
-        RunOnSta(() => TerminalImage.Save("A coding agent's view: MCP session with demo-cli (results shortened)", text.ToString(), Path.Combine(outDir, "11-mcp-session.png"), width: 1180));
+        RunOnSta(() => TerminalImage.Save("A coding agent's view: MCP session with demo-cli (results shortened)", text.ToString(), Path.Combine(outDir, "13-mcp-session.png"), width: 1180));
     }
 
     private static string Run(string exe, string arguments)

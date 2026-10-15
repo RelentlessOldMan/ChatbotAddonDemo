@@ -11,9 +11,9 @@ using Demo.Domain;
 namespace Demo.Paths.Tests;
 
 /// <summary>
-/// 💲 The same job with real models: path C with real Claude and OpenAI, and path D with real Claude Code and Codex.
+/// 💲 The same job with real models: path C with real Claude and OpenAI, and path D2 (demo-cli mcp) with real Claude Code and Codex.
 /// Every test spends real money (a few cents each), so all are skipped unless DEMO_LIVE_TESTS=1 is set. Path C
-/// needs ANTHROPIC_API_KEY / OPENAI_API_KEY; path D needs the agent installed and signed in, and bills its user.
+/// needs ANTHROPIC_API_KEY / OPENAI_API_KEY; path D2 needs the agent installed and signed in, and bills its user.
 /// Each result is compared with the same job done on the command line, which costs nothing.
 /// Run: $env:DEMO_LIVE_TESTS='1'; dotnet test tests/Demo.Paths.Tests --filter Category=Live
 /// </summary>
@@ -65,8 +65,8 @@ public sealed class LivePathTests : IDisposable
         var workspace = Path.Combine(_root, "c");
         using var client = ChatClientFactory.Create(provider, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
         var meter = new UsageMeter(info.DefaultModel, ChatLimitUsd, tokenLimitWhenUnpriced: 200_000);
-        var session = new ChatSession(client, CapabilityCatalog.FromObject(new TestBenchCapabilities(new TestBenchService(workspace, BenchOptions.Instant))),
-            meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+        await using var tools = await Paths.DesktopHub(workspace).ConnectChatAsync([], TestContext.Current.CancellationToken); // through the hub, as in the app
+        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
         var asked = new List<string>();
 
         var turn = await session.SendAsync(Scenario.Question, (request, _) => { asked.Add(request.Capability.Name); return Task.FromResult(true); }, Ct);
@@ -93,8 +93,8 @@ public sealed class LivePathTests : IDisposable
         var workspace = Path.Combine(_root, "c-follow-up");
         using var client = ChatClientFactory.Create(AiProvider.Anthropic, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
         var meter = new UsageMeter(info.DefaultModel, ChatLimitUsd);
-        var session = new ChatSession(client, CapabilityCatalog.FromObject(new TestBenchCapabilities(new TestBenchService(workspace, BenchOptions.Instant))),
-            meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+        await using var tools = await Paths.DesktopHub(workspace).ConnectChatAsync([], TestContext.Current.CancellationToken); // through the hub, as in the app
+        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
 
         var first = await session.SendAsync("Create a test plan from LDO-3300_datasheet.csv: 25 °C only, 5 V supply only, 1 unit, IQ only. Don't run it.",
             (_, _) => Task.FromResult(true), Ct);
@@ -108,7 +108,7 @@ public sealed class LivePathTests : IDisposable
     }
 
     [Fact]
-    public async Task Path_D_Claude_Code_does_the_job_over_MCP()
+    public async Task Path_D2_Claude_Code_does_the_job_over_MCP()
     {
         SkipUnlessLive();
         var claude = Agent("DEMO_CLAUDE_EXE", "claude.exe", Path.Combine("node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"));
@@ -139,7 +139,7 @@ public sealed class LivePathTests : IDisposable
     }
 
     [Fact]
-    public async Task Path_D_Codex_does_the_job_over_MCP()
+    public async Task Path_D2_Codex_does_the_job_over_MCP()
     {
         SkipUnlessLive();
         var codex = Agent("DEMO_CODEX_EXE", "codex.exe",

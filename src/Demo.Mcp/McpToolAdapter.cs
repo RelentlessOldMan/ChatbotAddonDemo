@@ -4,14 +4,17 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
-namespace Demo.Cli;
+namespace Demo.Mcp;
 
 /// <summary>
-/// Which capabilities a coding agent may see. Read-only unless the person who configured the agent
-/// adds <c>--allow-writes</c> (plans, reports) and/or <c>--allow-runs</c> (the bench).
+/// Which capabilities a coding agent may see through <c>demo-cli mcp</c>. Read-only unless the person who configured
+/// the agent adds <c>--allow-writes</c> (plans, reports) and/or <c>--allow-runs</c> (the bench).
 /// </summary>
 public sealed record McpExposurePolicy(bool AllowWrites, bool AllowRuns)
 {
+    /// <summary>Every tool. For the desktop app's hub, where the app itself asks the user before a change.</summary>
+    public static readonly McpExposurePolicy All = new(AllowWrites: true, AllowRuns: true);
+
     public bool Exposes(Capability capability) => capability.Safety switch
     {
         SafetyClass.Read => true,

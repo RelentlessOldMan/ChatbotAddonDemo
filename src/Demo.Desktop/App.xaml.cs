@@ -1,5 +1,6 @@
 using System.Windows;
 using Demo.Desktop.ViewModels;
+using Demo.Mcp;
 
 namespace Demo.Desktop;
 
@@ -17,6 +18,15 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args is ["mcp", ..])
+        {
+            // A coding agent started this copy of the exe: no window, just pass its MCP messages to the copy the
+            // user has open (path D1). Exits when either side hangs up.
+            var agentPipe = LaunchOptions.Parse(e.Args).AgentPipe ?? AgentDoor.DefaultPipeName;
+            Shutdown(Task.Run(() => AgentRelay.RunAsync(agentPipe, Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error, TimeSpan.FromSeconds(3)))
+                .GetAwaiter().GetResult());
+            return;
+        }
         // The AI features are an add-on to a tool people depend on: whatever goes wrong in them (or anywhere in the
         // UI, e.g. a key that can't be saved) is reported, and the tool keeps running.
         DispatcherUnhandledException += (_, args) =>

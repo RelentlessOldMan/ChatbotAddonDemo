@@ -1,6 +1,6 @@
 # ADR-004: Coding agents connect through the console tool (stdio MCP); no MCP server in the desktop app
 
-**Status:** Accepted (revised: an earlier draft also hosted MCP over HTTP inside the WPF app)
+**Status:** Superseded by [ADR-007](007-mcp-hub-in-the-desktop-app.md). The console tool's MCP door described here is kept as path D2; the desktop app now has an MCP hub, and agents can also connect to the open app (path D1). Kept for the record of what was decided and why.
 
 ## Context
 Engineers who use coding agents (Claude Code, Codex, Cursor) want those agents to drive our tool. MCP is the standard way to do that. We have two programs that could host an MCP server:
@@ -16,7 +16,7 @@ Engineers who use coding agents (Claude Code, Codex, Cursor) want those agents t
 ## Decision
 **Option 1.** `demo-cli mcp` is the single entry point for agents. Permissions are flags set by whoever configures the agent: read-only by default, `--allow-writes` for plans and reports, `--allow-runs` for the bench.
 
-Option 2 is documented as an **optional extension, not built** ([design §8](../design.md#8-optional-not-built-mcp-inside-the-desktop-app)), for products where an agent and a person need to work in the same live session.
+Option 2 was left as an optional extension, not built, for products where an agent and a person need to work in the same live session. ADR-007 later built that, with a named pipe instead of HTTP.
 
 ## Why
 - It covers the need. Plans and results are files in a shared workspace, so whatever the agent does through the console tool shows up in the open desktop app anyway (it watches the folder).

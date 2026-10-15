@@ -44,7 +44,23 @@ public interface IMachinePolicy
 
     /// <summary>When true, users cannot enter their own keys (only the gateway may be used).</summary>
     bool DisableUserKeys { get; }
+
+    /// <summary>Outside MCP servers IT has set up for the assistant (Perforce, GitHub, Microsoft 365…).</summary>
+    IReadOnlyList<PolicyMcpServer> McpServers => [];
+
+    /// <summary>When true, only IT's outside MCP servers are used: the ones users add in Settings are ignored.</summary>
+    bool DisableUserMcpServers => false;
+
+    /// <summary>When true, coding agents can't connect to the desktop app, whatever the user's setting.</summary>
+    bool DisableAgentConnections => false;
 }
+
+/// <summary>
+/// An outside MCP server set by IT. <paramref name="Command"/> starts it (or is its https address); null when the
+/// policy value isn't text, so the entry is reported as unusable rather than silently dropped.
+/// <paramref name="Trusted"/>: its tools may run without asking the user each time.
+/// </summary>
+public sealed record PolicyMcpServer(string Name, string? Command, bool Trusted);
 
 public sealed class NoMachinePolicy : IMachinePolicy
 {
@@ -56,7 +72,8 @@ public sealed class NoMachinePolicy : IMachinePolicy
 
 /// <summary>
 /// Reads <c>HKLM\Software\Policies\ChatbotAddonDemo\{Provider}</c> values <c>GatewayUrl</c> / <c>GatewayToken</c>,
-/// and <c>DisableUserKeys</c> (DWORD) on the root key.
+/// <c>DisableUserKeys</c>, <c>DisableUserMcpServers</c> and <c>DisableAgentConnections</c> (DWORDs) on the root key, and
+/// one subkey per outside MCP server under <c>McpServers</c>, each with <c>Command</c> (text) and <c>Trusted</c> (DWORD).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class RegistryMachinePolicy : IMachinePolicy
@@ -68,6 +85,28 @@ public sealed class RegistryMachinePolicy : IMachinePolicy
     public string? GatewayToken(AiProvider provider) => Read($@"{Root}\{provider}", "GatewayToken") as string; // a wrong type is just no token: the gateway refuses
 
     public bool DisableUserKeys => IsSet(Read(Root, "DisableUserKeys"));
+
+    public bool DisableUserMcpServers => IsSet(Read(Root, "DisableUserMcpServers"));
+
+    public bool DisableAgentConnections => IsSet(Read(Root, "DisableAgentConnections"));
+
+    public IReadOnlyList<PolicyMcpServer> McpServers
+    {
+        get
+        {
+            using var servers = Registry.LocalMachine.OpenSubKey($@"{Root}\McpServers");
+            return servers is null
+                ? []
+                : servers.GetSubKeyNames().Select(name => McpServer(name, Read($@"{Root}\McpServers\{name}", "Command"), Read($@"{Root}\McpServers\{name}", "Trusted"))).ToList();
+        }
+    }
+
+    /// <summary>
+    /// A command that isn't text is kept, as unusable, so IT sees it reported. Trust loosens the rules, so unlike the
+    /// switches above, a value of an unexpected type counts as "no": only a number or text other than 0 is a yes.
+    /// </summary>
+    internal static PolicyMcpServer McpServer(string name, object? command, object? trusted) =>
+        new(name, command as string, trusted is int or long or string && IsSet(trusted));
 
     // A policy value of an unexpected registry type is still a policy: it fails closed rather than being ignored.
 

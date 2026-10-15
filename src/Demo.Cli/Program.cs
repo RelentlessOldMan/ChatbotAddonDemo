@@ -2,6 +2,7 @@ using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
 using Demo.Cli;
 using Demo.Domain;
+using Demo.Mcp;
 
 // demo-cli: the "legacy" console tool for scripted and batch work. Ordinary commands call the
 // domain directly, exactly as before AI existed. `demo-cli mcp` turns the same process into an MCP
@@ -26,9 +27,10 @@ if (line.WantsHelp)
     return 0;
 }
 
+// This tool's own workspace. The desktop app is a separate program with a workspace of its own.
 var workspace = line.Text("--workspace")
     ?? Environment.GetEnvironmentVariable("DEMO_WORKSPACE")
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatbotAddonDemo", "workspace");
+    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChatbotAddonDemoCli", "workspace");
 
 // Opened only after the command line has been checked: opening a new workspace seeds it with examples.
 TestBenchService? opened = null;
@@ -198,7 +200,7 @@ static void PrintHelp() => Console.WriteLine(
     Usage: demo-cli [--workspace <folder>] <command>
 
     The workspace is --workspace, else the DEMO_WORKSPACE environment variable, else
-    %LOCALAPPDATA%\ChatbotAddonDemo\workspace (created with examples on first use).
+    %LOCALAPPDATA%\ChatbotAddonDemoCli\workspace (created with examples on first use).
 
       specs                              List spec sheets (design files) in the workspace
       plans                              List test plans

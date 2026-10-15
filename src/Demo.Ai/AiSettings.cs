@@ -26,11 +26,23 @@ public sealed record AiSettings
     /// </summary>
     public const long DefaultUnpricedTokenLimit = 500_000;
 
+    /// <summary>
+    /// Lets coding agents (Claude Code, Codex…) connect to the open app through <c>demo-desktop.exe mcp</c>.
+    /// Off until the user turns it on; IT can keep it off (<see cref="Credentials.IMachinePolicy.DisableAgentConnections"/>).
+    /// </summary>
+    public bool AgentsEnabled { get; init; }
+
+    /// <summary>Outside MCP servers the user added for the assistant, besides any IT set up.</summary>
+    public List<McpServerSetting> McpServers { get; init; } = [];
+
     public string ModelFor(AiProvider provider) =>
         Models.TryGetValue(provider, out var model) && !string.IsNullOrWhiteSpace(model)
             ? model
             : ProviderInfo.For(provider).DefaultModel;
 }
+
+/// <summary>An outside MCP server the user added: a name, and the command that starts it or its https address.</summary>
+public sealed record McpServerSetting(string Name, string Command);
 
 /// <summary>
 /// The spending limit as typed in Settings. Only an empty box means no limit: anything else must be a positive
@@ -89,6 +101,7 @@ public sealed class AiSettingsStore(string path)
         {
             Provider = Enum.IsDefined(loaded.Provider) ? loaded.Provider : defaults.Provider,
             Models = (loaded.Models ?? []).Where(m => Enum.IsDefined(m.Key) && m.Value is not null).ToDictionary(),
+            McpServers = (loaded.McpServers ?? []).Where(m => m is { Name: not null, Command: not null }).ToList(),
             // Null is a deliberate "no limit"; zero or less can only come from a damaged file, so the default applies.
             SessionSpendCapUsd = loaded.SessionSpendCapUsd is <= 0 ? defaults.SessionSpendCapUsd : loaded.SessionSpendCapUsd,
         };

@@ -1,12 +1,9 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
-using System.Text;
-using System.Text.Json;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Demo.Ai;
-using Demo.Capabilities;
+using Demo.Mcp;
 using Microsoft.Extensions.AI;
 
 namespace Demo.Desktop.ViewModels;
@@ -18,6 +15,7 @@ public sealed partial class ChatViewModel : ObservableObject
     private readonly AiSettings _settings;
     private readonly Dictionary<string, ChatItem> _itemsByCallId = [];
     private ChatSession? _session;
+    private HubTools? _tools;
     private Action? _detachSession;
     private CancellationTokenSource? _cts;
     private int _generation;
@@ -73,7 +71,7 @@ public sealed partial class ChatViewModel : ObservableObject
         _cts = cts;
         try
         {
-            _session ??= CreateSession();
+            _session ??= await CreateSessionAsync(generation, cts.Token);
             await _session.SendAsync(text, (request, ct) => ApproveAsync(request, generation, ct), cts.Token);
         }
         catch (Exception) when (generation != _generation)
@@ -120,9 +118,15 @@ public sealed partial class ChatViewModel : ObservableObject
 
     /// <summary>
     /// Called when this panel is replaced (Settings changed) or closed: cancels any request in flight and
-    /// pending approvals, and stops listening to the old session so late events can't touch anything.
+    /// pending approvals, stops listening to the old session so late events can't touch anything, and closes
+    /// the hub connection (which ends any outside MCP servers it started).
     /// </summary>
-    public void Shutdown() => EndSession();
+    public void Shutdown()
+    {
+        EndSession();
+        if (_tools is { } tools) _ = tools.DisposeAsync().AsTask();
+        _tools = null;
+    }
 
     private void EndSession()
     {
@@ -141,10 +145,37 @@ public sealed partial class ChatViewModel : ObservableObject
         foreach (var pending in Items.OfType<ApprovalItem>().Where(a => a.IsPending).ToList()) pending.Cancel();
     }
 
-    private ChatSession CreateSession()
+    /// <summary>
+    /// Connects to the hub on the first message: the app's tools, plus those of any outside MCP servers (which may take
+    /// a few seconds to start). Kept for New chat; closed by <see cref="Shutdown"/>.
+    /// </summary>
+    private async Task<HubTools> ConnectToolsAsync(int generation, CancellationToken cancellationToken)
     {
+        if (_tools is not null) return _tools;
+        var outside = _services.OutsideServers(_settings);
+        if (outside.Count > 0) Activity = "Connecting to " + string.Join(", ", outside.Select(s => s.Name)) + "…";
+        HubTools tools;
+        try
+        {
+            tools = await _services.Hub.ConnectChatAsync(outside, cancellationToken);
+        }
+        finally
+        {
+            Activity = "Thinking…";
+        }
+        if (generation != _generation)
+        {
+            await tools.DisposeAsync(); // closed while connecting
+            throw new OperationCanceledException();
+        }
+        foreach (var problem in tools.Problems) Items.Add(new NoticeItem(problem, isError: true));
+        return _tools = tools;
+    }
+
+    private async Task<ChatSession> CreateSessionAsync(int generation, CancellationToken cancellationToken)
+    {
+        var tools = await ConnectToolsAsync(generation, cancellationToken);
         var meter = new UsageMeter(Model, _settings.SessionSpendCapUsd);
-        var generation = _generation;
         // The meter reports from whichever thread the request finished on (often not the UI's), so the summary is
         // updated on the UI thread, and not at all once this chat has been cleared or closed.
         // Token counts come from the provider; only the dollar figure is an estimate.
@@ -153,7 +184,7 @@ public sealed partial class ChatViewModel : ObservableObject
             if (generation == _generation) UsageSummary = meter.Summary + (meter.EstimatedCostUsd is null ? "" : " (estimate)");
         });
         meter.Changed += onUsage;
-        var session = new ChatSession(_services.CreateChatClient(_settings), _services.Catalog, meter, _services.ChatOptions);
+        var session = new ChatSession(_services.CreateChatClient(_settings), tools.Catalog, meter, _services.ChatOptions);
         session.MessageAdded += Render;
         _detachSession = () =>
         {
@@ -167,14 +198,7 @@ public sealed partial class ChatViewModel : ObservableObject
     {
         // A request from a chat that has since been cleared or closed must never show a card in the new one.
         if (generation != _generation) throw new OperationCanceledException(cancellationToken);
-        var heading = request.Capability.Safety switch
-        {
-            SafetyClass.Execute => "The assistant wants to use the test bench",
-            SafetyClass.Write => "The assistant wants to create a file",
-            // A read normally runs without asking, but is asked about when it comes in the same reply as a change.
-            _ => "The assistant wants to look something up",
-        };
-        var item = new ApprovalItem(heading, request.Capability.Title, FormatArguments(request.Arguments));
+        var item = new ApprovalItem(ApprovalText.Heading("The assistant", request.Capability), request.Capability.Title, ApprovalText.Arguments(request.Arguments));
         _itemsByCallId[request.CallId] = item;
         Items.Add(item);
         Activity = "Waiting for your approval…";
@@ -204,7 +228,7 @@ public sealed partial class ChatViewModel : ObservableObject
                 case ToolApprovalRequestContent:
                     break; // Rendered by ApproveAsync as an approval card.
                 case FunctionCallContent call when !_itemsByCallId.ContainsKey(call.CallId):
-                    var title = _services.Catalog.TryGet(call.Name, out var capability) ? capability.Title : call.Name;
+                    var title = _tools?.Catalog.TryGet(call.Name, out var capability) == true ? capability.Title : call.Name;
                     var tool = new ToolItem(title, call.Name);
                     _itemsByCallId[call.CallId] = tool;
                     Items.Add(tool);
@@ -218,37 +242,5 @@ public sealed partial class ChatViewModel : ObservableObject
                     break;
             }
         }
-    }
-
-    private const int MaxArgumentLength = 200;
-
-    /// <summary>
-    /// One line per argument; strings bare, everything else (numbers, lists) as compact JSON. The values come from
-    /// the model, so each is forced onto one line (a value with line breaks can't pass for extra arguments) and cut short.
-    /// </summary>
-    private static string FormatArguments(IReadOnlyDictionary<string, object?> arguments) =>
-        string.Join("\n", arguments.Select(a => $"{OneLine(a.Key)}: {OneLine(a.Value switch
-        {
-            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString() ?? "",
-            string s => s,
-            var v => JsonSerializer.Serialize(v, CapabilityCatalog.SerializerOptions),
-        })}"));
-
-    private static string OneLine(string value)
-    {
-        var text = new StringBuilder(Math.Min(value.Length, MaxArgumentLength + 10));
-        foreach (var c in value)
-        {
-            if (text.Length >= MaxArgumentLength) return text.Append('…').ToString();
-            text.Append(c switch
-            {
-                '\r' => @"\r",
-                '\n' => @"\n",
-                '\t' => @"\t",
-                _ when char.IsControl(c) || char.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator => $@"\u{(int)c:x4}",
-                _ => c.ToString(),
-            });
-        }
-        return text.ToString();
     }
 }

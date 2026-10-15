@@ -198,8 +198,29 @@
                 </TabItem>
             </TabControl>
 
-            <local:ChatPanel Grid.Column="1" Width="400" DataContext="{Binding Chat}"
-                             Visibility="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
+            <!-- The AI side: coding agents working with this window (when allowed), then the assistant (when opted in) -->
+            <Grid Grid.Column="1" Width="400" Background="{StaticResource Panel}"
+                  Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <local:AgentPanel DataContext="{Binding Agents}"
+                                  Visibility="{Binding DataContext.IsAgentPanelVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
+                    <local:AgentPanel.Style>
+                        <Style TargetType="local:AgentPanel">
+                            <Style.Triggers>
+                                <!-- Shares the column with the chat: a third of it, scrolling, so the chat stays usable -->
+                                <DataTrigger Binding="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                    <Setter Property="MaxHeight" Value="260"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </local:AgentPanel.Style>
+                </local:AgentPanel>
+                <local:ChatPanel Grid.Row="1" DataContext="{Binding Chat}"
+                                 Visibility="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
+            </Grid>
         </Grid>
 
         <!-- Status bar -->
