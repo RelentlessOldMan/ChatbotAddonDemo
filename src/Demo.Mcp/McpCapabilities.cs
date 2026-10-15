@@ -24,8 +24,16 @@ public static class McpCapabilities
     /// </summary>
     public static Capability FromOutsideTool(McpClientTool tool, OutsideServer server, string name) =>
         new(new ResultsForModels(tool.WithName(name)), server.Trusted ? SafetyClass.Read : SafetyClass.Execute,
-            $"{server.Name}: {tool.ProtocolTool.Title ?? tool.Name}")
+            $"{server.Name}: {OneLine(tool.ProtocolTool.Title ?? tool.Name)}")
         { Server = server.Name };
+
+    /// <summary>Someone else's title, made safe to show on an approval card: one line, so it can't pass for more card text.</summary>
+    private static string OneLine(string title)
+    {
+        var line = string.Join(' ', title.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        line = new string(line.Where(c => !char.IsControl(c)).ToArray());
+        return line.Length > 80 ? line[..80] + "…" : line;
+    }
 
     private static SafetyClass SafetyOf(McpClientTool tool) => tool.ProtocolTool.Annotations switch
     {

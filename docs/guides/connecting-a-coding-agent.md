@@ -111,7 +111,7 @@ The same on both paths, except that the desktop app adds `get_current_view` (wha
   | `openWorldHint: true` | Execute tools (`start_test_run`, `cancel_test_run`) | Affects things outside the app (here, the bench) |
   | `destructiveHint: true` | `cancel_test_run` only | May destroy work (the rest of the run is never measured) |
 
-- The server sends instructions on connect: the workflow (spec → plan → run → analysis) and rules such as "don't compute statistics yourself; use `get_run_summary`".
+- The server sends instructions on connect: the workflow (spec → plan → run → analysis) and rules such as "Never compute statistics or pass/fail yourself from raw rows; get_run_summary and query_measurements do it exactly."
 - Rule violations and bad arguments come back as tool errors (`isError: true`) with a readable message the agent can act on, e.g. "Temperature 200 °C is outside the bench range -55 to 150 °C." An error about an argument names that argument.
 - Results include **absolute file paths** (`results.csv`, `plots\IQ.png`, `report.html`), so an agent with file access can open them for its own analysis.
 - Runs take time: call `start_test_run`, then `wait_for_test_run` (up to 120 s per call), then `get_run_summary`. With the console tool, if the session ends mid-run, the tool cancels the run (status *Cancelled*); if it's killed outright, the run shows as *Interrupted* after about 15 s.

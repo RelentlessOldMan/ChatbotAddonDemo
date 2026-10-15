@@ -40,7 +40,7 @@ This covers model mistakes and **prompt injection from data**, e.g. a spec sheet
 ### 5. Coding agents (MCP)
 **Connecting to the open desktop app** (path D1, `demo-desktop.exe mcp`):
 - **Off by default.** The user turns it on in Settings ("Let coding agents connect to this window"); IT can keep it off for everyone (`DisableAgentConnections`).
-- **No port, no network listener.** The app listens on a named pipe (`ChatbotAddonDemo.TestBench.<user name>`) whose access list allows only the current Windows user and denies network access, so neither another user nor another machine can connect. The relay, in turn, connects only to a pipe created by its own user (`PipeOptions.CurrentUserOnly`), so another user can't set up a pipe under that name to listen in. Only one window per user opens the pipe (`FirstPipeInstance`).
+- **No port, no network listener.** The app listens on a named pipe (`ChatbotAddonDemo.TestBench.<the account's SID>`) owned by the current Windows user, whose access list allows only that user and denies network access, so neither another user nor another machine can connect. The relay, in turn, connects only to a pipe created by its own user (`PipeOptions.CurrentUserOnly`), so another user can't set up a pipe under that name to listen in. Only one window per user opens the pipe (`FirstPipeInstance`).
 - **The user approves each change in the window.** Write and Execute tools from an agent show the same approval card as the chat ("Claude Code wants to use the test bench"), whatever the agent's own permission settings say. A declined call tells the agent that nothing was changed and not to retry unless asked. Every call is listed in the window's Coding agents panel, so the user sees what the agent does.
 - **Agents see only our tools.** The hub never offers an agent the tools of other MCP servers, so an agent can't use TestBench to reach the customer's GitHub or Perforce with the user's credentials.
 - The agent's name on the card comes from the agent itself, so it's a label, not proof of who is asking. What protects the user is that every change needs their click.
@@ -60,7 +60,7 @@ The hub can connect the chat to other MCP servers that the user or IT sets up (P
 - Tool names are prefixed with the server's name (`github_search_code`), so another server can't shadow one of our tools or another server's. The card names the server.
 - IT can add servers for everyone and stop users adding their own (`DisableUserMcpServers`). A user's server can't take the name of an IT server.
 - A command-line server runs as the user, with the user's rights and credentials. That's the same trust the user gives any program they run; IT can restrict it with `DisableUserMcpServers` or AppLocker / WDAC.
-- Addresses must use https (plain http only to this PC). A server that fails or doesn't answer within 30 seconds is skipped and reported in the chat.
+- Addresses must use https (plain http only to this PC). A server that fails or doesn't answer within 30 seconds is skipped and reported in the chat. Settings shows users only the program or host of IT's servers, not the whole command line, which may hold arguments IT would rather not show.
 
 ### 7. Data leaving the PC
 
@@ -106,7 +106,7 @@ Thick arrows are the only traffic that leaves the PC. Paths A and B send nothing
 - **Other MCP servers:** each call's arguments go to that server, and its results join the chat, so they go to the chat's provider with the next request. A command-line server may itself send data wherever it's built to; that's between the customer and that server.
 
 ### 8. Demo-only parts
-`--demo --snapshot-pipe <name>` starts a named pipe that the screenshot tool uses to render windows. It exists only with both options, is restricted to the current user (`PipeOptions.CurrentUserOnly`), and runs against a throwaway profile. A shipping build should leave it out. `--agent-pipe <name>` gives the agent pipe another name, so tests and screenshots never reach the user's open TestBench; it changes nothing else.
+`--demo --snapshot-pipe <name>` starts a named pipe that the screenshot tool uses to render windows. It exists only with both options, is restricted to the current user (`PipeOptions.CurrentUserOnly`), and runs against a throwaway profile. A shipping build should leave it out. `--agent-pipe <name>` gives the agent pipe another name, so tests and screenshots never reach the user's open TestBench; it changes nothing else. A missing value for any of these options stops the app (exit code 2) rather than falling back to the defaults, which would be the user's real profile and pipe. `--demo` also ignores IT's policy, which matters only for a demo: it never uses the user's keys or settings.
 
 ## Not built, and what it would need
 

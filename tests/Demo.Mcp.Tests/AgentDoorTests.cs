@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
 using Demo.Domain;
@@ -92,6 +94,82 @@ public sealed class AgentDoorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Nothing_happens_until_the_user_answers()
+    {
+        Open();
+        var agent = await ConnectAgent();
+        var before = Bench().ListPlans().Count;
+        _user.Hold = true;
+
+        var call = agent.CallToolAsync("create_test_plan_from_spec", NewPlan, cancellationToken: Ct).AsTask();
+        await WaitUntil(() => _user.Asked.Count == 1);
+        await Task.Delay(300, Ct); // time enough to have run, had it not waited
+
+        Assert.False(call.IsCompleted);
+        Assert.Equal(before, Bench().ListPlans().Count);
+        _user.Decide(true);
+        Assert.NotEqual(true, (await call).IsError);
+        Assert.Equal(before + 1, Bench().ListPlans().Count);
+    }
+
+    [Theory]
+    [InlineData("start_test_run", "planId", "TP-1001", SafetyClass.Execute)]
+    [InlineData("cancel_test_run", "runId", "R-1001", SafetyClass.Execute)]
+    [InlineData("generate_report", "runId", "R-1001", SafetyClass.Write)]
+    public async Task Bench_actions_and_reports_are_asked_about_too(string tool, string parameter, string value, SafetyClass safety)
+    {
+        Open();
+        var agent = await ConnectAgent();
+        var runsBefore = Bench().ListRuns().Select(r => (r.Id, r.Status)).ToList();
+        _user.Answer = false;
+
+        var result = await agent.CallToolAsync(tool, new Dictionary<string, object?> { [parameter] = value }, cancellationToken: Ct);
+
+        var asked = Assert.Single(_user.Asked);
+        Assert.Equal((tool, safety), (asked.Capability.Name, asked.Capability.Safety));
+        Assert.Equal(AgentDoor.Declined, Text(result));
+        Assert.Empty(_user.Runs);
+        Assert.Equal(runsBefore, Bench().ListRuns().Select(r => (r.Id, r.Status)).ToList());
+    }
+
+    [Fact]
+    public async Task When_the_agent_hangs_up_its_card_is_withdrawn_and_nothing_runs()
+    {
+        Open();
+        var agent = await ConnectAgent();
+        var before = Bench().ListPlans().Count;
+        _user.Hold = true;
+
+        _ = agent.CallToolAsync("create_test_plan_from_spec", NewPlan, cancellationToken: Ct).AsTask();
+        await WaitUntil(() => _user.Asked.Count == 1);
+        await _pipes[agent].DisposeAsync(); // the agent quits (Ctrl+C, or its terminal is closed): no goodbye, just gone
+
+        await WaitUntil(() => _user.Withdrawn);
+        await WaitUntil(() => _user.Connected == 0);
+        _user.Decide(true); // the user approves the card anyway, too late
+        await Task.Delay(300, Ct);
+        Assert.Empty(_user.Runs);
+        Assert.Equal(before, Bench().ListPlans().Count);
+    }
+
+    [Fact]
+    public async Task Only_this_Windows_user_can_open_the_pipe_and_never_from_another_computer()
+    {
+        Open();
+        await ConnectAgent();
+        var pipe = _pipes.Values.Single();
+
+        var security = pipe.GetAccessControl();
+        var rules = security.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<PipeAccessRule>().ToList();
+        var me = WindowsIdentity.GetCurrent().User!;
+
+        Assert.Equal(me, security.GetOwner(typeof(SecurityIdentifier)));
+        Assert.All(rules.Where(r => r.AccessControlType == AccessControlType.Allow), r => Assert.Equal(me, r.IdentityReference));
+        Assert.Contains(rules, r => r.AccessControlType == AccessControlType.Deny
+            && r.IdentityReference.Equals(new SecurityIdentifier(WellKnownSidType.NetworkSid, null)));
+    }
+
+    [Fact]
     public async Task A_denied_change_is_an_error_and_nothing_is_created()
     {
         Open();
@@ -116,6 +194,8 @@ public sealed class AgentDoorTests : IAsyncDisposable
 
         await first.CallToolAsync("list_test_plans", cancellationToken: Ct);
         await second.CallToolAsync("list_test_plans", cancellationToken: Ct);
+
+        Assert.Equal(2, _user.Connected);
         await second.DisposeAsync();
         await _pipes[second].DisposeAsync(); // the agent hangs up
 
@@ -124,11 +204,12 @@ public sealed class AgentDoorTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_second_app_can_not_open_the_same_door()
+    public void A_second_app_can_not_open_the_same_door()
     {
         Open();
 
-        Assert.ThrowsAny<IOException>(() => Open());
+        var refused = Assert.ThrowsAny<IOException>(() => Open());
+        Assert.Equal("Another TestBench window already lets coding agents connect.", refused.Message);
     }
 
     [Fact]
@@ -187,22 +268,36 @@ public sealed class AgentDoorTests : IAsyncDisposable
         try { Directory.Delete(_workspace, recursive: true); } catch (IOException) { }
     }
 
-    /// <summary>The person at the app: answers every approval card with <see cref="Answer"/>.</summary>
+    /// <summary>
+    /// The person at the app: answers every approval card with <see cref="Answer"/>, or, with <see cref="Hold"/>,
+    /// leaves it waiting until <see cref="Decide"/>, the way a card waits in the app.
+    /// </summary>
     private sealed class FakeUser : IAgentSupervisor
     {
         private int _connected;
+        private readonly TaskCompletionSource<bool> _decision = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Answer { get; set; }
+        public bool Hold { get; set; }
         public ConcurrentQueue<AgentCall> Asked { get; } = new();
         public ConcurrentQueue<AgentCall> Runs { get; } = new();
         public int Connected => Volatile.Read(ref _connected);
+        public bool Withdrawn { get; private set; }
 
         public void AgentConnected() => Interlocked.Increment(ref _connected);
         public void AgentDisconnected() => Interlocked.Decrement(ref _connected);
 
-        public Task<bool> ApproveAsync(AgentCall call, CancellationToken cancellationToken)
+        public void Decide(bool approve) => _decision.TrySetResult(approve);
+
+        public async Task<bool> ApproveAsync(AgentCall call, CancellationToken cancellationToken)
         {
             Asked.Enqueue(call);
-            return Task.FromResult(Answer);
+            if (!Hold) return Answer;
+            try { return await _decision.Task.WaitAsync(cancellationToken); }
+            catch (OperationCanceledException)
+            {
+                Withdrawn = true; // the app takes the card down
+                throw;
+            }
         }
 
         public void Ran(AgentCall call) => Runs.Enqueue(call);

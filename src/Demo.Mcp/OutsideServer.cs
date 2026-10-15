@@ -16,7 +16,15 @@ public sealed record OutsideServer(string Name, string Target, bool Trusted, Ser
     /// <summary>Names prefix every tool from the server (<c>github_search_issues</c>), so they're kept short and plain.</summary>
     public const int MaxNameLength = 20;
 
-    public bool IsRemote => Target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || Target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    public bool IsRemote => Target.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase) || Target.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// What it is, without the details: the host of an address, or the program of a command line. A command line can
+    /// carry a token as an argument, so this is what's shown to users, not the whole thing.
+    /// </summary>
+    public string Summary =>
+        IsRemote ? (Uri.TryCreate(Target.Trim(), UriKind.Absolute, out var url) ? url.Host : Target.Trim())
+        : SplitCommandLine(Target) is [var program, ..] ? Path.GetFileName(program) : "";
 
     /// <summary>Why this entry can't be used, or null when it can.</summary>
     public string? Problem()
@@ -45,7 +53,8 @@ public sealed record OutsideServer(string Name, string Target, bool Trusted, Ser
         if (IsRemote)
             return new HttpClientTransport(new HttpClientTransportOptions { Endpoint = new Uri(Target.Trim()), Name = Name });
         var parts = SplitCommandLine(Target);
-        return new StdioClientTransport(new StdioClientTransportOptions { Name = Name, Command = parts[0], Arguments = parts.Skip(1).ToList() });
+        // A short shutdown: when the app closes, a server that doesn't exit by itself is ended before the app is gone.
+        return new StdioClientTransport(new StdioClientTransportOptions { Name = Name, Command = parts[0], Arguments = parts.Skip(1).ToList(), ShutdownTimeout = TimeSpan.FromSeconds(2) });
     }
 
     /// <summary>

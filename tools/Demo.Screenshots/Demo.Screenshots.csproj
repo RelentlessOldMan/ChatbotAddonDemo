@@ -19,7 +19,8 @@
 
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
-    <!-- The MCP client for the agent's-eye screenshot; the path to demo-cli.exe is passed in on the command line. Same version as Demo.Cli. -->
+    <!-- The MCP client that stands in for a coding agent: through demo-desktop.exe mcp for the agent panel shot (D1), and
+         through demo-cli.exe for the agent's-eye shot (D2, its path passed in on the command line). Same version as Demo.Mcp. -->
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
   </ItemGroup>
 

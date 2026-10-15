@@ -6,7 +6,7 @@ using Demo.Mcp;
 
 // demo-cli: the "legacy" console tool for scripted and batch work. Ordinary commands call the
 // domain directly, exactly as before AI existed. `demo-cli mcp` turns the same process into an MCP
-// server that a coding agent starts and talks to over stdin/stdout (docs/adr/004-mcp-via-console-tool.md).
+// server that a coding agent starts and talks to over stdin/stdout (docs/adr/004-mcp-via-console-tool.md, kept as path D2 by ADR-007).
 // Exit codes: 0 success, 1 the command failed (a business rule or a file problem), 2 bad command line.
 
 Console.OutputEncoding = System.Text.Encoding.UTF8; // units like µA and °C

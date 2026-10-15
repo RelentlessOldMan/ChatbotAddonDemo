@@ -45,7 +45,7 @@ public sealed class SameAnswerOnEveryPathTests : IDisposable
         var credential = new ResolvedCredential(CredentialSource.Gateway, "token", gateway.BaseUrl);
         var model = ProviderInfo.For(provider).DefaultModel;
         using var client = ChatClientFactory.Create(provider, model, credential);
-        var session = new ChatSession(client, tools.Catalog, new UsageMeter(model, null), ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+        var session = new ChatSession(client, tools.Catalog, new UsageMeter(model, null), ChatSessionOptions.For(DesktopTools.Instructions));
 
         var turn = await session.SendAsync(Scenario.Question, (_, _) => Task.FromResult(true), Ct);
         return RunOutcome.Read(workspace, Scenario.RunId().Match(turn.Text).Value);

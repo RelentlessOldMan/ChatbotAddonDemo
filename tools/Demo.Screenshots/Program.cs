@@ -285,7 +285,7 @@ public static class Program
         if (process.ExitCode != 0) throw new InvalidOperationException($"demo-cli {arguments} failed ({process.ExitCode}): {output}");
         // Long temp paths make the image unreadable; show the workspace as a short placeholder.
         var workspace = arguments.Split('"')[1];
-        return output.Replace(workspace, @"%LOCALAPPDATA%\ChatbotAddonDemo\workspace");
+        return output.Replace(workspace, @"%LOCALAPPDATA%\ChatbotAddonDemoCli\workspace"); // demo-cli's default
     }
 
     private static void RunOnSta(Action action)

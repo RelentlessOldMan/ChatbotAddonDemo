@@ -33,23 +33,30 @@ public static class Paths
         return File.Exists(exe) ? exe : throw new FileNotFoundException($"Build {project} first: {exe} is missing.", exe);
     }
 
-    /// <summary>The desktop app's tools for AI, put together as the app does (the AI side of its composition root).</summary>
+    /// <summary>The desktop app's hub, from the same definition the app uses (<see cref="DesktopTools"/>).</summary>
     public static McpHub DesktopHub(string workspace) =>
-        new(CapabilityCatalog.FromObject(new TestBenchCapabilities(new TestBenchService(workspace, BenchOptions.Instant))),
-            "testbench", TestBenchCapabilities.Instructions);
+        new(DesktopTools.Catalog(new TestBenchService(workspace, BenchOptions.Instant), new SelectionContext()), "testbench", DesktopTools.AgentInstructions);
 
     /// <summary>Path D1 without a model: the open app lets agents in, and an agent connects through <c>demo-desktop.exe mcp</c>.</summary>
     public static async Task<(McpClient Agent, IAsyncDisposable Door)> AgentToOpenApp(McpHub hub, CancellationToken cancellationToken)
     {
         var pipe = "ChatbotAddonDemo.PathsTests." + Guid.NewGuid().ToString("N");
         var door = hub.OpenAgentDoor(pipe, new ApprovingUser());
-        var agent = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+        try
         {
-            Name = "testbench",
-            Command = DesktopExe,
-            Arguments = ["mcp", "--agent-pipe", pipe],
-        }), cancellationToken: cancellationToken);
-        return (agent, door);
+            var agent = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = "testbench",
+                Command = DesktopExe,
+                Arguments = ["mcp", "--agent-pipe", pipe],
+            }), cancellationToken: cancellationToken);
+            return (agent, door);
+        }
+        catch
+        {
+            await door.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>The person at the open app, approving every change an agent asks for.</summary>

@@ -16,7 +16,7 @@ namespace Demo.Mcp;
 public sealed class McpHub(CapabilityCatalog catalog, string serverName, string instructions)
 {
     /// <summary>How long an outside server gets to start and answer before the chat goes on without it.</summary>
-    public static readonly TimeSpan OutsideServerTimeout = TimeSpan.FromSeconds(30);
+    public TimeSpan OutsideServerTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>The app's own tools, as served to every connection.</summary>
     public CapabilityCatalog Catalog { get; } = catalog;
@@ -49,31 +49,18 @@ public sealed class McpHub(CapabilityCatalog catalog, string serverName, string 
                 .Select(McpCapabilities.FromOwnTool)
                 .ToList();
 
-            foreach (var server in outside)
+            // All at once, so a few servers that don't answer cost one timeout, not one each; then in the list's order.
+            var reached = await Task.WhenAll(outside.Select(server => ConnectOutsideAsync(server, cancellationToken)));
+            connections.AddRange(reached.Where(r => r.Client is not null).Select(r => r.Client!));
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var (server, (_, tools, problem)) in outside.Zip(reached))
             {
-                if (server.Problem() is { } problem)
+                if (problem is not null) problems.Add(problem);
+                foreach (var tool in tools)
                 {
-                    problems.Add(problem);
-                    continue;
-                }
-                try
-                {
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(OutsideServerTimeout);
-                    var client = await McpClient.CreateAsync(OutsideTransport(server), cancellationToken: timeout.Token);
-                    connections.Add(client);
-                    foreach (var tool in await client.ListToolsAsync(cancellationToken: timeout.Token))
-                    {
-                        var name = PrefixedName(server, tool.Name);
-                        if (capabilities.Any(c => c.Name == name)) continue; // a clash can only come from a server reusing a name
-                        capabilities.Add(McpCapabilities.FromOutsideTool(tool, server, name));
-                    }
-                }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-                {
-                    problems.Add(ex is OperationCanceledException
-                        ? $"Couldn't connect to {server.Name}: it didn't answer within {OutsideServerTimeout.TotalSeconds:0} seconds."
-                        : $"Couldn't connect to {server.Name}: {ex.GetBaseException().Message}");
+                    var name = PrefixedName(server, tool.Name);
+                    if (capabilities.Any(c => c.Name == name)) continue; // a clash can only come from a server reusing a name
+                    capabilities.Add(McpCapabilities.FromOutsideTool(tool, server, name));
                 }
             }
             return new HubTools(new CapabilityCatalog(capabilities), problems, connections);
@@ -82,6 +69,31 @@ public sealed class McpHub(CapabilityCatalog catalog, string serverName, string 
         {
             foreach (var connection in connections) await connection.DisposeAsync();
             throw;
+        }
+    }
+
+    /// <summary>One outside server's tools, or why there are none. Never throws: one broken server never stops the chat.</summary>
+    private async Task<(McpClient? Client, IList<McpClientTool> Tools, string? Problem)> ConnectOutsideAsync(OutsideServer server, CancellationToken cancellationToken)
+    {
+        if (server.Problem() is { } problem) return (null, [], problem);
+        McpClient? client = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(OutsideServerTimeout);
+            client = await McpClient.CreateAsync(OutsideTransport(server), cancellationToken: timeout.Token);
+            return (client, await client.ListToolsAsync(cancellationToken: timeout.Token), null);
+        }
+        catch (Exception ex)
+        {
+            if (client is not null)
+            {
+                try { await client.DisposeAsync(); } // connected, but its tools couldn't be listed: don't leave it running
+                catch (Exception) { }
+            }
+            return (null, [], cancellationToken.IsCancellationRequested ? null
+                : ex is OperationCanceledException ? $"Couldn't connect to {server.Name}: it didn't answer within {OutsideServerTimeout.TotalSeconds:0} seconds."
+                : $"Couldn't connect to {server.Name}: {ex.GetBaseException().Message}");
         }
     }
 

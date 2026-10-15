@@ -1,7 +1,6 @@
 using System.ComponentModel;
-using Demo.Capabilities;
 
-namespace Demo.Desktop;
+namespace Demo.Capabilities.TestBench;
 
 /// <summary>What the user is looking at right now. Updated by the UI, read from any thread.</summary>
 public sealed class SelectionContext

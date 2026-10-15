@@ -214,10 +214,11 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>The window is closing: nothing may keep running for an AI in the background.</summary>
-    public void Shutdown()
+    /// <returns>Ending the outside servers' processes, which must happen before this app exits.</returns>
+    public Task Shutdown()
     {
-        Chat?.Shutdown();
-        CloseAgentDoor();
+        CloseAgentDoor(); // in-process only: nothing outlives the app
+        return Chat?.Shutdown() ?? Task.CompletedTask;
     }
 
     // ---- Refresh --------------------------------------------------------------------------------

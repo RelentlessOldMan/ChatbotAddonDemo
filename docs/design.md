@@ -64,7 +64,7 @@ workspace\
 
 **The two apps are separate programs, each with its own workspace.** They stand for two different products, one with a UI and one for the command line, not one app in two forms, so they never share files or talk to each other.
 
-- The desktop app uses `%LOCALAPPDATA%\ChatbotAddonDemo\workspace`, or the folder given by `--workspace`. Its `--demo` mode uses a throwaway workspace in `%TEMP%` unless `--workspace` is given.
+- The desktop app uses `%LOCALAPPDATA%\ChatbotAddonDemo\workspace`, or the folder given by `--workspace`. Its `--demo` mode uses a throwaway workspace in `%TEMP%` unless `--workspace` is given, and ignores IT's policy, so the demo, the UI tests and the screenshots look the same on every PC.
 - The console tool uses `%LOCALAPPDATA%\ChatbotAddonDemoCli\workspace`, or the folder given by `--workspace` or the `DEMO_WORKSPACE` environment variable.
 
 Inside the desktop app every way in (the screens, the chat, a connected agent) uses the same bench service, so a plan or run made by any of them appears on screen within a moment.
@@ -83,7 +83,7 @@ flowchart TB
     subgraph desktop["demo-desktop.exe: the WPF app"]
         direction TB
         ui["Screens<br/>plans · runs · spec sheets"]
-        chat["Chat panel<br/>(off until enabled)"]
+        chat["Chat panel (off until enabled)<br/>runs the agent loop"]
         relay["demo-desktop.exe mcp<br/>relay started by the agent<br/>(off until allowed in Settings)"]
         hub["MCP hub<br/>approvals · permissions"]
         dcap["Tools for AI (capability catalog)<br/>names, descriptions, safety classes"]
@@ -100,7 +100,7 @@ flowchart TB
 
     llm["💲 Claude or OpenAI API<br/>billed to the customer's key or gateway"]
     other["Other MCP servers (optional)<br/>e.g. Perforce · GitHub · Microsoft 365<br/>added by the user or IT"]
-    agent["Claude Code / Codex"]
+    agent["Claude Code / Codex<br/>runs its own agent loop"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's<br/>subscription or API key"]
     dws[("Desktop app's workspace<br/>specs · plans · runs")]
     cws[("Console tool's workspace<br/>specs · plans · runs")]
@@ -218,6 +218,8 @@ Write and Execute are separate because they carry different risks. A wrong plan 
 Business-rule errors ("Temperature 200 °C is outside the bench range -55 to 150 °C") come back to the model as readable results, not exceptions, so it can correct itself or explain the problem to the user. They read the same with or without the hub in between.
 
 ## 6. Path C in detail: the chat assistant
+
+The model decides, the loop drives, the hub controls access. The model only ever answers with text or "please run tool X". `ChatSession` is the loop: it sends the question with the list of tools, runs each tool the model asks for (through the hub, which asks the user first where needed), sends the result back, and repeats until the model answers in plain text (or a per-message request limit or the spending limit stops it). On path D the coding agent runs that same loop itself, and only the hub's part happens in our app.
 
 ### 6.1 One conversation, step by step
 
@@ -383,7 +385,7 @@ sequenceDiagram
     R->>W: connects to the named pipe (this Windows user only)
     Note over R,W: App not open, or agents not allowed: the relay says how to fix it and exits
     A->>W: initialize, tools/list (relayed, free)
-    W-->>A: 14 tools + instructions ("changes wait for the user to approve them")
+    W-->>A: 14 tools + instructions: changes wait for the user to approve them
     A->>L: 💲 request + our tool definitions
     L-->>A: 💲 use get_current_view, list_spec_files
     A->>W: tools/call (Read: runs at once, shown in the agent panel)
@@ -450,13 +452,13 @@ The hub (`McpHub`, in `Demo.Mcp`) is the desktop app's one door for every AI. Wh
 When a chat starts, `McpHub.ConnectChatAsync` gives the chat panel its tools:
 
 - **Our tools** come over a real MCP connection inside the process: an MCP server and client joined by in-memory pipes, with no process and no port. The chat gets them back in the catalog's order, as catalog entries, with their safety class read back from the annotations. Their results are unwrapped from MCP's envelope, so the model reads exactly what it would read without the hub.
-- **Other servers' tools** come from each server the user or IT added, named with the server first (`github_search_issues`), so two servers' `search` tools can't clash, and kept to what every provider accepts in a tool name. A server that can't be reached within 30 seconds, or whose entry is unusable, is skipped and named in the chat as a notice: one broken server never stops the chat.
+- **Other servers' tools** come from each server the user or IT added, named with the server first (`github_search_issues`), so two servers' `search` tools can't clash, and kept to what every provider accepts in a tool name. The servers are connected side by side, so the slowest one sets the wait. A server that can't be reached within 30 seconds, or whose entry is unusable, is skipped and named in the chat as a notice: one broken server never stops the chat.
 
 This connection has no approval gate of its own, because the chat session asks the user before every call that needs it (§6.1).
 
 ### 8.2 The agent door (D1)
 
-`AgentDoor` listens on a **named pipe**, one name per Windows user (`ChatbotAddonDemo.TestBench.<user>`), and serves each connected agent the same tools through an approval gate: reads run at once, everything else waits for `IAgentSupervisor.ApproveAsync`, which the agent panel shows as a card. `demo-desktop.exe mcp` is the relay (`AgentRelay`): it copies the agent's stdin/stdout to the pipe and back, so to the agent it looks like any other stdio MCP server.
+`AgentDoor` listens on a **named pipe**, one name per Windows account (`ChatbotAddonDemo.TestBench.<the account's SID>`), and serves each connected agent the same tools through an approval gate: reads run at once, everything else waits for `IAgentSupervisor.ApproveAsync`, which the agent panel shows as a card. `demo-desktop.exe mcp` is the relay (`AgentRelay`): it copies the agent's stdin/stdout to the pipe and back, so to the agent it looks like any other stdio MCP server.
 
 Why a named pipe and a relay, not an HTTP server on `127.0.0.1`: a listening port has to be secured against every program and web page on the PC (bearer tokens, Host/Origin checks against DNS rebinding, token rotation). The pipe gets the same protection from Windows:
 
@@ -518,7 +520,7 @@ Details: [security.md](security.md).
 
 The UI tests and the screenshot tool open the app **off-screen, without activating it and without a taskbar button**, and drive it through UI Automation patterns (no mouse or keyboard). They never interrupt whoever is using the PC. Each one gives its app copy its own agent pipe name (`--agent-pipe`), so a test agent never meets the TestBench the user has open.
 
-GitHub Actions (`.github/workflows/build.yml`) builds everything and runs the free test projects on every push. It never runs the paid tests (no keys are available there) or the UI tests (they need an interactive desktop).
+GitHub Actions (`.github/workflows/build.yml`) builds everything and runs the free test projects on every push to main and every pull request. It never runs the paid tests (no keys are available there) or the UI tests (they need an interactive desktop).
 
 ## 12. Screenshots are generated, not taken by hand
 

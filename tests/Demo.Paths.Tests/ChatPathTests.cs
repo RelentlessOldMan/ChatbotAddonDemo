@@ -38,7 +38,7 @@ public sealed class ChatPathTests : IAsyncDisposable
         // The tools through the hub (C3), as the chat panel gets them.
         _tools = await Paths.DesktopHub(_workspace).ConnectChatAsync([], TestContext.Current.CancellationToken);
         var session = new ChatSession(client, _tools.Catalog, new UsageMeter(model, limitUsd, tokenLimitWhenUnpriced: unpricedTokenLimit),
-            ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+            ChatSessionOptions.For(DesktopTools.Instructions));
         return (session, client);
     }
 
@@ -78,8 +78,8 @@ public sealed class ChatPathTests : IAsyncDisposable
         for (var i = 0; i < gateway.Received.Count; i++)
         {
             var request = gateway.Received[i];
-            // Every request carries the 13 tools for AI and the whole conversation so far (i tool results).
-            Assert.Equal(13, request.Parsed.ToolNames.Count);
+            // Every request carries the desktop app's 14 tools for AI and the whole conversation so far (i tool results).
+            Assert.Equal(14, request.Parsed.ToolNames.Count);
             Assert.Equal(i, request.Parsed.ToolResults.Count);
             Assert.Contains("LDO-3300", request.Parsed.LastUserText);
             // Approvals are our bookkeeping: they must not reach the provider as empty messages.

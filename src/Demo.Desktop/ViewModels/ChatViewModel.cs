@@ -121,11 +121,14 @@ public sealed partial class ChatViewModel : ObservableObject
     /// pending approvals, stops listening to the old session so late events can't touch anything, and closes
     /// the hub connection (which ends any outside MCP servers it started).
     /// </summary>
-    public void Shutdown()
+    /// <returns>Closing the connections to outside servers, which ends their processes.</returns>
+    public Task Shutdown()
     {
         EndSession();
-        if (_tools is { } tools) _ = tools.DisposeAsync().AsTask();
+        var tools = _tools;
         _tools = null;
+        // Off the UI thread, so the window can wait for it while closing without blocking it.
+        return tools is null ? Task.CompletedTask : Task.Run(() => tools.DisposeAsync().AsTask());
     }
 
     private void EndSession()

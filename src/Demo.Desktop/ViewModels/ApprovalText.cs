@@ -13,11 +13,12 @@ public static class ApprovalText
     /// <param name="who">"The assistant", or the coding agent's name.</param>
     public static string Heading(string who, Capability capability) => capability switch
     {
-        { Server: { } server } => $"{who} wants to use {server}",
-        { Safety: SafetyClass.Execute } => $"{who} wants to use the test bench",
-        { Safety: SafetyClass.Write } => $"{who} wants to create a file",
+        // An agent names itself, so its name is forced onto one line like the arguments below.
+        { Server: { } server } => $"{OneLine(who)} wants to use {server}",
+        { Safety: SafetyClass.Execute } => $"{OneLine(who)} wants to use the test bench",
+        { Safety: SafetyClass.Write } => $"{OneLine(who)} wants to create a file",
         // A read normally runs without asking, but is asked about when it comes in the same reply as a change.
-        _ => $"{who} wants to look something up",
+        _ => $"{OneLine(who)} wants to look something up",
     };
 
     /// <summary>

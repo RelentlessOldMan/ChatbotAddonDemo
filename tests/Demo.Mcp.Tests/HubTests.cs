@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.IO.Pipelines;
+using System.IO.Pipes;
 using System.Text.Json;
+using Demo.Ai;
 using Demo.Capabilities;
 using Demo.Capabilities.TestBench;
 using Demo.Domain;
@@ -19,6 +21,7 @@ public sealed class HubTests : IAsyncDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "mcp-hub", Guid.NewGuid().ToString("N"));
     private readonly List<IAsyncDisposable> _cleanup = [];
     private readonly Dictionary<string, McpServerTool[]> _fakeServers = [];
+    private int _issuesCreated;
 
     private CapabilityCatalog Direct() => CapabilityCatalog.FromObject(new TestBenchCapabilities(new TestBenchService(_workspace, BenchOptions.Instant)));
 
@@ -27,7 +30,7 @@ public sealed class HubTests : IAsyncDisposable
     /// <summary>Stands in for Perforce, GitHub and the like: a real MCP server, reached over in-memory pipes.</summary>
     private IClientTransport ConnectToFake(OutsideServer server)
     {
-        if (!_fakeServers.TryGetValue(server.Name, out var tools)) return server.CreateTransport();
+        if (!_fakeServers.TryGetValue(server.Name, out var tools)) throw new FileNotFoundException($"{server.Target} wasn't found.");
         Pipe toServer = new(), toClient = new();
         var fake = McpServer.Create(new StreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream()),
             new McpServerOptions { ServerInfo = new() { Name = server.Name, Version = "1" }, ToolCollection = [.. tools] });
@@ -40,7 +43,7 @@ public sealed class HubTests : IAsyncDisposable
     [
         McpServerTool.Create(([Description("Words to look for.")] string query) => $"2 issues match '{query}'",
             new McpServerToolCreateOptions { Name = "search_issues", Title = "Search issues", ReadOnly = true }),
-        McpServerTool.Create(([Description("Issue title.")] string title) => new { number = 7, title },
+        McpServerTool.Create(([Description("Issue title.")] string title) => new { number = 6 + Interlocked.Increment(ref _issuesCreated), title },
             new McpServerToolCreateOptions { Name = "create_issue", Title = "Create an issue" }),
         McpServerTool.Create(() => new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = "Repository not found" }] },
             new McpServerToolCreateOptions { Name = "get.repo" }),
@@ -128,7 +131,69 @@ public sealed class HubTests : IAsyncDisposable
 
         var tools = await Connect(Hub(), Server("github", trusted: true));
 
-        Assert.All(tools.Catalog.Capabilities.Where(c => c.Server == "github"), c => Assert.Equal(SafetyClass.Read, c.Safety));
+        Assert.Empty(tools.Problems);
+        Assert.Equal(SafetyClass.Read, tools.Catalog["github_search_issues"].Safety);
+        Assert.Equal(SafetyClass.Read, tools.Catalog["github_create_issue"].Safety); // IT's word counts for the whole server
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task In_the_chat_an_outside_tool_asks_first_unless_IT_trusts_the_server(bool trusted)
+    {
+        FakeGitHub();
+        var tools = await Connect(Hub(), Server("github", trusted));
+        var model = new ScriptedChatClient([
+            ScriptedChatClient.Call("github_create_issue", new Dictionary<string, object?> { ["title"] = "IQ too high" }),
+            ScriptedChatClient.Reply("Done."),
+        ]);
+        var session = new ChatSession(model, tools.Catalog, new UsageMeter("claude-opus-5-5", null));
+        var asked = new List<string>();
+
+        await session.SendAsync("File an issue about IQ", (request, _) =>
+        {
+            asked.Add(request.Capability.Name);
+            return Task.FromResult(false); // the user says no
+        }, Ct);
+
+        // Untrusted: the user is asked, says no, and the server never hears of it. Trusted: it just runs.
+        Assert.Equal(trusted ? [] : ["github_create_issue"], asked);
+        Assert.Equal(trusted ? 1 : 0, _issuesCreated);
+    }
+
+    [Fact]
+    public async Task An_agent_sees_only_the_apps_own_tools_even_when_the_chat_has_outside_servers()
+    {
+        FakeGitHub();
+        var hub = Hub();
+        var chat = await Connect(hub, Server("github"));
+        Assert.Contains(chat.Catalog.Capabilities, c => c.Server == "github");
+        var pipeName = $"ChatbotAddonDemo.Tests.{Guid.NewGuid():N}";
+        await using var door = hub.OpenAgentDoor(pipeName, new NobodyAsks());
+        await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
+        await pipe.ConnectAsync(5000, Ct);
+        await using var agent = await McpClient.CreateAsync(new StreamClientTransport(pipe, pipe), cancellationToken: Ct);
+
+        var tools = await agent.ListToolsAsync(cancellationToken: Ct);
+
+        Assert.Equal(hub.Catalog.Capabilities.Select(c => c.Name).Order(), tools.Select(t => t.Name).Order());
+    }
+
+    [Fact]
+    public async Task A_server_that_doesnt_answer_in_time_is_skipped_and_named()
+    {
+        // A server that accepts the connection and then says nothing.
+        Pipe toServer = new(), toClient = new();
+        var hub = new McpHub(Direct(), "testbench", "instructions")
+        {
+            OutsideServerTimeout = TimeSpan.FromSeconds(1),
+            OutsideTransport = _ => new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()),
+        };
+
+        var tools = await Connect(hub, Server("silent"));
+
+        Assert.Equal("Couldn't connect to silent: it didn't answer within 1 seconds.", Assert.Single(tools.Problems));
+        Assert.Contains(tools.Catalog.Capabilities, c => c.Name == "list_test_plans");
     }
 
     [Fact]
@@ -164,5 +229,13 @@ public sealed class HubTests : IAsyncDisposable
     {
         foreach (var item in Enumerable.Reverse(_cleanup)) await item.DisposeAsync();
         try { Directory.Delete(_workspace, recursive: true); } catch (IOException) { }
+    }
+
+    private sealed class NobodyAsks : IAgentSupervisor
+    {
+        public void AgentConnected() { }
+        public void AgentDisconnected() { }
+        public Task<bool> ApproveAsync(AgentCall call, CancellationToken cancellationToken) => Task.FromResult(false);
+        public void Ran(AgentCall call) { }
     }
 }

@@ -10,14 +10,23 @@ using Microsoft.Extensions.AI;
 namespace Demo.Desktop;
 
 /// <summary>
-/// Command-line options. <c>--demo</c> = fresh example workspace, scripted assistant, throwaway profile.
+/// Command-line options. <c>--demo</c> = fresh example workspace, scripted assistant, throwaway profile, no IT policy.
 /// <c>--agent-pipe</c> = the name coding agents connect under (tests use their own, so they never meet the user's app).
 /// </summary>
 public sealed record LaunchOptions(bool Demo, string? ProfileDirectory, string? Workspace, string? SnapshotPipe, string? AgentPipe = null)
 {
+    /// <exception cref="ArgumentException">An option is missing its value. Never guessed: falling back to the
+    /// defaults would put a test or a demo in the user's real profile, or in front of their agents.</exception>
     public static LaunchOptions Parse(string[] args)
     {
-        string? Value(string name) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault();
+        string? Value(string name)
+        {
+            var at = Array.IndexOf(args, name);
+            if (at < 0) return null;
+            if (at + 1 >= args.Length || args[at + 1].StartsWith("--", StringComparison.Ordinal))
+                throw new ArgumentException($"{name} needs a value.");
+            return args[at + 1];
+        }
         return new LaunchOptions(args.Contains("--demo"), Value("--profile"), Value("--workspace"), Value("--snapshot-pipe"), Value("--agent-pipe"));
     }
 }
@@ -25,11 +34,9 @@ public sealed record LaunchOptions(bool Demo, string? ProfileDirectory, string? 
 /// <summary>Composition root: builds every service once and hands them to view models.</summary>
 public sealed class AppServices
 {
-    /// <summary>What a coding agent is told about working with the open app, on top of the domain instructions.</summary>
-    private const string AgentInstructions =
-        "- You are working with the TestBench window the user has open. Creating plans or reports and using the bench wait for the user to approve them in that window; if they decline, accept it and don't retry unless they ask.";
-
-    public AppServices(LaunchOptions options)
+    /// <param name="policy">IT's settings for this PC. Default: the registry's, except in demo mode, which is a
+    /// sandbox (and what the UI tests and screenshots run in), so it looks the same on every PC.</param>
+    public AppServices(LaunchOptions options, IMachinePolicy? policy = null)
     {
         Options = options;
         ProfileDirectory = options.ProfileDirectory
@@ -43,17 +50,14 @@ public sealed class AppServices
 
         Settings = new AiSettingsStore(Path.Combine(ProfileDirectory, "settings.json"));
         CredentialStore = new DpapiCredentialStore(Path.Combine(ProfileDirectory, "credentials"));
-        Policy = new RegistryMachinePolicy();
+        Policy = policy ?? (options.Demo ? NoMachinePolicy.Instance : new RegistryMachinePolicy());
         Credentials = new CredentialResolver(CredentialStore, Policy);
         Selection = new SelectionContext();
 
         // What AI may do here: the bench capabilities, plus one that only the running UI can answer. Every AI reaches
         // them through the hub: the chat panel in-process, coding agents through the agent door.
-        var domainInstructions = TestBenchCapabilities.Instructions + "\n" + AppContextCapabilities.Instructions;
-        var catalog = CapabilityCatalog.FromObject(new TestBenchCapabilities(Bench))
-            .Concat(CapabilityCatalog.FromObject(new AppContextCapabilities(Selection)));
-        Hub = new McpHub(catalog, "testbench", domainInstructions + "\n" + AgentInstructions);
-        ChatOptions = ChatSessionOptions.For(domainInstructions);
+        Hub = new McpHub(DesktopTools.Catalog(Bench, Selection), "testbench", DesktopTools.AgentInstructions);
+        ChatOptions = ChatSessionOptions.For(DesktopTools.Instructions);
         AgentPipeName = options.AgentPipe ?? AgentDoor.DefaultPipeName;
     }
 
@@ -77,7 +81,7 @@ public sealed class AppServices
 
     /// <summary>The outside MCP servers the assistant connects to: IT's, then the user's own unless IT allows only its list.</summary>
     public IReadOnlyList<OutsideServer> OutsideServers(AiSettings settings) => OutsideServer.Combine(
-        Policy.McpServers.Select(s => new OutsideServer(s.Name, s.Command ?? "", s.Trusted, ServerOrigin.Policy)),
+        Policy.McpServers.Select(s => new OutsideServer(s.Name, s.Command?.Trim() ?? "", s.Trusted, ServerOrigin.Policy)),
         settings.McpServers.Select(s => new OutsideServer(s.Name.Trim(), s.Command.Trim(), Trusted: false, ServerOrigin.User)),
         userServersAllowed: !Policy.DisableUserMcpServers);
 

@@ -19,12 +19,14 @@ Engineers who use coding agents (Claude Code, Codex, Cursor) want those agents t
 Option 2 was left as an optional extension, not built, for products where an agent and a person need to work in the same live session. ADR-007 later built that, with a named pipe instead of HTTP.
 
 ## Why
-- It covers the need. Plans and results are files in a shared workspace, so whatever the agent does through the console tool shows up in the open desktop app anyway (it watches the folder).
+- It covers the need. Plans and results are files in a shared workspace, so whatever the agent does through the console tool shows up in the open desktop app anyway (it watches the folder). (No longer true: the two programs now have separate workspaces and the desktop app doesn't watch the folder; see [ADR-007](007-mcp-hub-in-the-desktop-app.md).)
 - It has the smallest security surface: no network listener at all.
 - It's the standard local-MCP shape, so setup is one command in either agent (`claude mcp add …`, `codex mcp add …`).
 - One MCP host means one place to test and document.
 
 ## Consequences
+At the time of this decision; [ADR-007](007-mcp-hub-in-the-desktop-app.md) replaced the first two points:
+
 - The desktop app has no MCP code and no MCP settings. Its Settings page points agent users to `demo-cli mcp`.
 - An agent can't ask "what is the user looking at?" (`get_current_view` exists only in the chat panel). If that becomes important, build option 2 or a stdio shim that relays to the running app over a named pipe.
 - If the agent session ends during a bench run, the console tool cancels the run before it exits (status *Cancelled*), so the bench isn't left busy. If the process is killed outright, the run shows as *Interrupted* once its heartbeat is 15 s old. Agents should call `wait_for_test_run` before ending.

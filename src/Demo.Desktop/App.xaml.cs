@@ -18,11 +18,23 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        LaunchOptions options;
+        try
+        {
+            options = LaunchOptions.Parse(e.Args);
+        }
+        catch (ArgumentException ex)
+        {
+            if (e.Args is ["mcp", ..]) Console.Error.WriteLine(ex.Message); // the agent shows it
+            else MessageBox.Show(ex.Message, "TestBench", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(2);
+            return;
+        }
         if (e.Args is ["mcp", ..])
         {
             // A coding agent started this copy of the exe: no window, just pass its MCP messages to the copy the
             // user has open (path D1). Exits when either side hangs up.
-            var agentPipe = LaunchOptions.Parse(e.Args).AgentPipe ?? AgentDoor.DefaultPipeName;
+            var agentPipe = options.AgentPipe ?? AgentDoor.DefaultPipeName;
             Shutdown(Task.Run(() => AgentRelay.RunAsync(agentPipe, Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error, TimeSpan.FromSeconds(3)))
                 .GetAwaiter().GetResult());
             return;
@@ -36,7 +48,7 @@ public partial class App : Application
             if (!Unobtrusive) // automated runs never put a window in front of the person at the machine
                 MessageBox.Show(MainWindow, $"Something went wrong: {args.Exception.Message}", "TestBench", MessageBoxButton.OK, MessageBoxImage.Error);
         };
-        _services = new AppServices(LaunchOptions.Parse(e.Args));
+        _services = new AppServices(options);
         if (_services.IsDemo && _services.Options.SnapshotPipe is { } pipe)
         {
             Unobtrusive = true;

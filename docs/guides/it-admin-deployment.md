@@ -13,7 +13,7 @@ Set machine policy (Group Policy Preferences or Intune) under `HKLM\Software\Pol
 | `OpenAI\GatewayToken` | *(optional)* | REG_SZ | As above |
 | `DisableUserKeys` | `1` | REG_DWORD | Hide the "paste your own key" option and ignore personal keys in `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; only the gateway may be used |
 
-Gateway URLs must use `https://` (plain `http://` is accepted only for `localhost`), so a token is never sent in clear text. Any gateway value that is present but unusable (not https, or not a valid address) is reported in Settings, and the app never falls back to personal keys.
+Gateway URLs must use `https://` (plain `http://` is accepted only for this PC: localhost or 127.0.0.1), so a token is never sent in clear text. Any gateway value that is present but unusable (not https, or not a valid address) is reported in Settings, and the app never falls back to personal keys.
 
 When no gateway is set, the app always uses the provider's official address (`api.anthropic.com` / `api.openai.com/v1`), so environment variables such as `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` can't redirect users' keys somewhere else.
 
@@ -33,8 +33,8 @@ Add one subkey per server under `HKLM\Software\Policies\ChatbotAddonDemo\McpServ
 | `McpServers\<name>\Trusted` | `1` | REG_DWORD | *(optional)* Its tools run without asking. Without it, every use of every tool asks the user first |
 | `DisableUserMcpServers` | `1` | REG_DWORD | Users can't add servers of their own; only yours are used |
 
-- `<name>` is the short name users see ("The assistant wants to use github") and the prefix of the tool names the model sees (`github_search_code`): up to 20 letters, digits or dashes. Your servers come first; a user's server with the same name is ignored.
-- Addresses must use `https://` (plain `http://` only for `localhost`). An entry that can't be used is skipped, and the chat says why.
+- `<name>` is the short name users see ("The assistant wants to use github") and the prefix of the tool names the model sees (`github_search_code`): up to 20 letters, digits or dashes. Your servers come first; a user's server with the same name is ignored, and Settings won't save one. Users see only the program or host of your servers, not the whole command line.
+- Addresses must use `https://` (plain `http://` only for this PC: localhost or 127.0.0.1). An entry that can't be used is skipped, and the chat says why.
 - **Approval:** tools from other servers ask the user before every use unless you set `Trusted=1`. The read-only labels such servers put on their own tools aren't trusted, and servers users add are never trusted.
 - Each server is started or contacted when the user sends their first message. One that doesn't answer within 30 seconds, or fails, is reported in the chat, and the chat carries on without it.
 - **Coding agents never see these servers.** Agents connected to the app get only TestBench's own tools.

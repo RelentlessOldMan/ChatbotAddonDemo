@@ -32,8 +32,9 @@ jobs:
         shell: pwsh
         run: |
           $failed = 0
-          foreach ($project in 'Domain', 'Capabilities', 'Ai', 'Mcp', 'Cli', 'Paths') {
-            dotnet test "tests/Demo.$project.Tests" -c Release --no-build
+          # Every test project except the UI tests, which need a desktop session.
+          foreach ($project in Get-ChildItem tests -Directory -Filter '*.Tests' | Where-Object Name -notlike '*UiTests') {
+            dotnet test $project.FullName -c Release --no-build
             if ($LASTEXITCODE -ne 0) { $failed++ }
           }
           exit $failed

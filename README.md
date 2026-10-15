@@ -36,7 +36,7 @@ flowchart LR
 
     subgraph desktop["demo-desktop.exe (WPF app)"]
         ui["Screens"]
-        chat["Chat panel<br/>(opt-in)"]
+        chat["Chat panel (opt-in)<br/>runs the agent loop"]
         hub["MCP hub<br/>the one door for every AI:<br/>approvals, permissions"]
         dcap["Tools for AI<br/>what it may do,<br/>with permissions"]
         dlogic["Core logic"]
@@ -49,7 +49,7 @@ flowchart LR
     end
 
     llm["💲 Claude / OpenAI API<br/>billed to the customer's key"]
-    agent["Claude Code / Codex"]
+    agent["Claude Code / Codex<br/>runs its own agent loop"]
     agentllm["💲 The agent's own model<br/>billed to the agent user's<br/>subscription or API key"]
     other["Other MCP servers (optional)<br/>e.g. Perforce · GitHub · Microsoft 365<br/>chosen by the user or IT"]
     dws[("Desktop app's workspace<br/>specs · plans · runs")]
@@ -79,7 +79,9 @@ flowchart LR
 
 **💲 marks every place tokens are spent.** Thick arrows are model calls; everything else is ordinary local code and file access.
 
-**The model never touches the app.** It only sends back text that asks for a tool (C2). The chat panel, which is our code, asks you first if the tool would create files, use the bench or reach another MCP server, then runs it through the hub (C3) and sends the result back in the next request (C1 again). This repeats until the model answers in words. Which provider and model to use (Claude or OpenAI, and the model name) comes from the app's Settings.
+**Who does what:** the model decides which tool to use, the loop drives (it sends the question, runs each tool the model asks for, and sends the result back), and the hub controls access (which tools there are, and which wait for the user's approval).
+
+**The model never touches the app.** It only sends back text that asks for a tool (C2). The chat panel, which is our code, asks you first if the tool would create files, use the bench or reach another MCP server (unless IT trusts that server), then runs it through the hub (C3) and sends the result back in the next request (C1 again). This repeats until the model answers in words. Which provider and model to use (Claude or OpenAI, and the model name) comes from the app's Settings.
 
 **The hub is the desktop app's one door for every AI.** The chat panel's tool calls go through it (in-process, so nothing extra leaves the PC). A coding agent can connect to the *open* app through it (D1), so it works with what you see on screen, and its changes wait for your OK in the window. And the hub connects the chat to other MCP servers, if the user or IT adds any, so the assistant can also use, say, Perforce or GitHub.
 
@@ -91,7 +93,7 @@ flowchart LR
 |---|---|---|---|
 | **A** | An engineer clicks around the desktop app. Unchanged legacy behavior. | No | n/a |
 | **B** | An engineer or a script runs `demo-cli` commands. Unchanged legacy behavior. | No | n/a |
-| **C** | An engineer types in the chat panel. 💲 Our app sends the question and a list of tools to Claude/OpenAI; the model replies "call tool X"; if X would create files, use the bench or use another MCP server, our app asks the user first; it runs X through the hub and 💲 sends the result back, until the model answers in words. | Yes, **our app** calls the model | Customer's key or gateway |
+| **C** | An engineer types in the chat panel. 💲 Our app sends the question and a list of tools to Claude/OpenAI; the model replies "call tool X"; if X would create files, use the bench or use another MCP server (unless IT trusts it), our app asks the user first; it runs X through the hub and 💲 sends the result back, until the model answers in words. | Yes, **our app** calls the model | Customer's key or gateway |
 | **D1** | An engineer asks Claude Code or Codex to work with the **open desktop app**. 💲 The agent asks its own model what to do; it reaches the app's hub through `demo-desktop.exe mcp` (a small relay it starts, which passes messages to the open window). Changes wait for approval in the window. Off until the user allows it in Settings. | Yes, but **only in their agent** | Their own subscription or API key |
 | **D2** | An engineer asks Claude Code or Codex to use the **console tool**. 💲 The agent asks its own model what to do; when it decides to use a tool, it **starts `demo-cli mcp`** as a child process and calls the tool over MCP. | Yes, but **only in their agent** | Their own subscription or API key |
 
@@ -232,7 +234,7 @@ dotnet build ChatbotAddonDemo.sln
 .\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe help
 
 # Tests. Nothing billed: the AI paths talk to a fake AI gateway on 127.0.0.1. The UI tests open the app off-screen.
-# GitHub runs the same tests, except the UI tests, on every push (.github/workflows/build.yml).
+# GitHub runs the same tests, except the UI tests, on every push to main and every pull request (.github/workflows/build.yml).
 dotnet test ChatbotAddonDemo.sln
 
 # 💲 Paid live tests, only when you explicitly opt in: the same job with real Claude and OpenAI (path C)

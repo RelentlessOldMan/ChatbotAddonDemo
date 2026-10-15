@@ -17,6 +17,7 @@ public partial class MainWindow : Window
             // A key saved or removed in the dialog is already in effect, even if the dialog is then cancelled.
             if (dialog.ShowDialog() == true || settings.CredentialsChanged) viewModel.ApplySettings(settings.CredentialsChanged);
         };
-        Closed += (_, _) => viewModel.Shutdown();
+        // An outside MCP server started from a command line would otherwise outlive the app.
+        Closed += (_, _) => viewModel.Shutdown().Wait(TimeSpan.FromSeconds(5));
     }
 }

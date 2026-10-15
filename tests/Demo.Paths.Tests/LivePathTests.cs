@@ -66,7 +66,7 @@ public sealed class LivePathTests : IDisposable
         using var client = ChatClientFactory.Create(provider, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
         var meter = new UsageMeter(info.DefaultModel, ChatLimitUsd, tokenLimitWhenUnpriced: 200_000);
         await using var tools = await Paths.DesktopHub(workspace).ConnectChatAsync([], TestContext.Current.CancellationToken); // through the hub, as in the app
-        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(DesktopTools.Instructions));
         var asked = new List<string>();
 
         var turn = await session.SendAsync(Scenario.Question, (request, _) => { asked.Add(request.Capability.Name); return Task.FromResult(true); }, Ct);
@@ -94,7 +94,7 @@ public sealed class LivePathTests : IDisposable
         using var client = ChatClientFactory.Create(AiProvider.Anthropic, info.DefaultModel, new ResolvedCredential(CredentialSource.EnvironmentVariable, key));
         var meter = new UsageMeter(info.DefaultModel, ChatLimitUsd);
         await using var tools = await Paths.DesktopHub(workspace).ConnectChatAsync([], TestContext.Current.CancellationToken); // through the hub, as in the app
-        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(TestBenchCapabilities.Instructions));
+        var session = new ChatSession(client, tools.Catalog, meter, ChatSessionOptions.For(DesktopTools.Instructions));
 
         var first = await session.SendAsync("Create a test plan from LDO-3300_datasheet.csv: 25 °C only, 5 V supply only, 1 unit, IQ only. Don't run it.",
             (_, _) => Task.FromResult(true), Ct);

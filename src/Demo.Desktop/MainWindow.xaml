@@ -209,10 +209,13 @@
                                   Visibility="{Binding DataContext.IsAgentPanelVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}">
                     <local:AgentPanel.Style>
                         <Style TargetType="local:AgentPanel">
+                            <!-- Alone: the whole column, so its list scrolls and a new card is never out of reach -->
+                            <Setter Property="Grid.RowSpan" Value="2"/>
                             <Style.Triggers>
                                 <!-- Shares the column with the chat: a third of it, scrolling, so the chat stays usable -->
                                 <DataTrigger Binding="{Binding DataContext.IsChatVisible, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
                                     <Setter Property="MaxHeight" Value="260"/>
+                                    <Setter Property="Grid.RowSpan" Value="1"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

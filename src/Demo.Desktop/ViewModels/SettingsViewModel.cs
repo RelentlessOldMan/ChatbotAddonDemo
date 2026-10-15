@@ -19,6 +19,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _services = services;
         _original = services.Settings.Load();
+        _policyServerNames = services.Policy.McpServers.Select(p => p.Name).ToList();
         _chatEnabled = _original.ChatEnabled;
         _useOpenAI = _original.Provider == AiProvider.OpenAI;
         _model = _original.ModelFor(_original.Provider);
@@ -31,8 +32,10 @@ public sealed partial class SettingsViewModel : ObservableObject
             OnServerRowChanged(null, null);
         };
         foreach (var server in _original.McpServers) AddServerRow(new McpServerRow { Name = server.Name, Command = server.Command });
+        // What each is, not its whole command line, which can hold a token passed as an argument.
         PolicyServers = services.Policy.McpServers
-            .Select(p => $"{p.Name}: {p.Command ?? "(not usable)"}" + (p.Trusted ? " · runs without asking" : ""))
+            .Select(p => $"{p.Name}: {(p.Command is { } c ? new OutsideServer(p.Name, c, p.Trusted, ServerOrigin.Policy).Summary : "(not usable)")}"
+                + (p.Trusted ? " · runs without asking" : ""))
             .ToList();
         RefreshCredential();
     }
@@ -64,7 +67,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// Save stays disabled while the limit is invalid, so a typo can never turn into "no limit", and while an MCP
     /// server entry can't be used, so it isn't silently skipped later.
     /// </summary>
-    public bool CanSave => SpendLimitText.TryParse(SpendCap, out _) && McpServersError.Length == 0;
+    public bool CanSave => SpendLimitText.TryParse(SpendCap, out _) && (UserServersBlocked || McpServersError.Length == 0); // blocked: the rows aren't shown, nor used
 
     // ---- Coding agents and other MCP servers ---------------------------------------------
 
@@ -76,6 +79,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>The servers the user added. A row left with no name and no command is dropped on Save.</summary>
     public ObservableCollection<McpServerRow> McpServers { get; } = [];
+
+    private readonly List<string> _policyServerNames;
 
     /// <summary>The servers IT set up, one line each; the user can't change them.</summary>
     public IReadOnlyList<string> PolicyServers { get; }
@@ -99,6 +104,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             var rows = FilledServerRows().ToList();
             var duplicate = rows.GroupBy(r => r.Name.Trim(), StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
             if (duplicate is not null) return $"Two servers are called '{duplicate.Key}': each needs its own name.";
+            if (rows.FirstOrDefault(r => _policyServerNames.Contains(r.Name.Trim(), StringComparer.OrdinalIgnoreCase)) is { } taken)
+                return $"Your IT department already set up a server called '{taken.Name.Trim()}': pick another name.";
             return rows.Select(r => new OutsideServer(r.Name.Trim(), r.Command.Trim(), false, ServerOrigin.User).Problem()).FirstOrDefault(p => p is not null) ?? "";
         }
     }
