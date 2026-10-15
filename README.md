@@ -43,8 +43,9 @@ flowchart LR
     eng -- A --> ui --> dlogic
     eng -- B --> cmds --> clogic
     eng -- C --> chat
-    chat == "💲 HTTPS, tokens" ==> llm
-    chat -- "runs the tool the<br/>model asked for" --> dcap --> dlogic
+    chat == "💲 C1: question +<br/>list of tools" ==> llm
+    llm == "💲 C2: reply: 'please<br/>run tool X'" ==> chat
+    chat -- "C3: our code runs tool X<br/>(after approval if it<br/>changes anything)" --> dcap --> dlogic
     dev -- D --> agent
     agent == "💲 tokens" ==> agentllm
     agent -- "starts it; MCP over stdin/stdout<br/>(no tokens on this hop)" --> mcp --> ccap --> clogic
@@ -56,6 +57,8 @@ flowchart LR
 ```
 
 **💲 marks every place tokens are spent.** Thick arrows are model calls; everything else is ordinary local code and file access.
+
+**The model never touches the app.** It only sends back text that asks for a tool (C2). The chat panel, which is our code, looks that tool up in the tools for AI, asks you first if it creates files or uses the bench, runs it (C3), and sends the result back in the next request (C1 again). This repeats until the model answers in words. Which provider and model to use (Claude or OpenAI, and the model name) comes from the app's Settings.
 
 | Path | In plain words | AI? | Who pays |
 |---|---|---|---|
