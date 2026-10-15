@@ -8,9 +8,9 @@ The assistant is a chat panel inside TestBench. You type what you want in plain 
 - "Make a hot/cold plan for the LDO-3300 from its datasheet: -40 to 125 °C, 3 units."
 - "Run it and tell me what you find."
 - "Which units failed at 125 °C?"
-- "Compare this run against the rev-B targets."
+- "Make a plan from the rev-B targets and run it."
 
-It can look things up on its own. **Before it creates a file or uses the bench, it asks you**, and nothing happens until you click Approve.
+It can look things up on its own. **Before it creates a file or uses the bench, it asks you**, and nothing happens until you click Approve. (If it wants to look something up in the same step as such a change, that lookup gets its own card too: "The assistant wants to look something up".)
 
 It's off until you turn it on.
 
@@ -22,14 +22,14 @@ An account with **Anthropic** (Claude) or **OpenAI**, and an API key from that a
 ## Turning it on
 1. Open **Settings**.
 2. Read the short note about what is sent, then tick **Enable the AI assistant**.
-3. Choose your provider, paste your API key, and click **Save key**. Click **Test connection** to check that it works.
+3. Choose your provider, paste your API key, and click **Save key**. Click **Test connection** to check that it works. 💲 This sends one tiny request, so it costs a fraction of a cent.
 4. Optionally set a **spending limit per chat**. The default is $1.00. (If TestBench doesn't know your model's prices, it limits tokens instead and says so under the input box.)
 5. Click **Save**. The **Assistant** panel appears on the right.
 
 ![Settings](../images/04-settings-ai-assistant.png)
 
 ## Using it
-- The small "⚙ …" lines show what the assistant looked up.
+- The small "⚙ …" lines show what the assistant looked up (the "tools" it used).
 - When it wants to **create a file** (a plan or a report) or **use the test bench**, you'll see an orange card with the exact details. **Approve** goes ahead; **Deny** leaves everything as it was, and the assistant will suggest something else.
 - When a run starts, the Runs tab opens so you can watch it progress. The findings and plots appear there too.
 - The line under the input box shows how much this chat has used and its estimated cost.

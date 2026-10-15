@@ -1,4 +1,4 @@
-# ADR-001: Expose AI through a capability layer, not the UI
+# ADR-001: Expose AI through a capability catalog, not the UI
 
 **Status:** Accepted
 
@@ -11,13 +11,13 @@ We want two AI integrations: an in-app chat assistant (desktop app) and coding a
 3. **One capability catalog** over the domain logic, adapted to each front end.
 
 ## Decision
-Option 3. Each capability is declared once in `Demo.Capabilities`: name, description written for models, typed parameters (which become the JSON schema), and a safety class:
+Option 3. The tools for AI (capability catalog) live in `Demo.Capabilities`. Each one is declared once: name, description written for models, typed parameters (which become the JSON schema), and a safety class:
 
 | Safety class | Meaning | Chat panel | MCP |
 |---|---|---|---|
-| `Read` | Only reads | Runs automatically | Always exposed, `readOnlyHint` |
-| `Write` | Creates files (plans, reports) | Needs approval | Only with `--allow-writes` |
-| `Execute` | Uses the bench hardware | Needs approval | Only with `--allow-runs`, `openWorldHint` |
+| `Read` | Only looks | Runs automatically (but a lookup asked for in the same step as a change also gets an approval card) | Always exposed; `readOnlyHint`, `idempotentHint` |
+| `Write` | Creates or changes files (plans, reports) | Needs approval | Only with `--allow-writes`; `generate_report` also `idempotentHint` |
+| `Execute` | Acts on the outside world (here, the bench hardware) | Needs approval | Only with `--allow-runs`; `openWorldHint`, and `destructiveHint` for `cancel_test_run` |
 
 The catalog produces `AIFunction`s. The chat panel uses them directly, and the console tool's MCP server wraps the same objects with `McpServerTool.Create`.
 
