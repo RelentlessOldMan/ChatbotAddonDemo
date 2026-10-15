@@ -93,7 +93,7 @@ flowchart LR
 | 💲 A coding agent using `demo-cli mcp` (path D) | `demo-cli` never does. The *agent* calls its own model to decide which tool to use next | **The agent user's** own subscription or API key |
 | 💲 "Test connection" in Settings | **Yes**, one tiny request | The customer's key or gateway |
 | `--demo` mode, the screenshots, `dotnet test` | **No.** A scripted fake model stands in | none |
-| 💲 `DEMO_LIVE_TESTS=1` | **Yes**, one short chat (a few requests) per provider | Whoever's key is in the environment |
+| 💲 `DEMO_LIVE_TESTS=1` | **Yes**: a short chat per provider, and the whole walkthrough job with each provider and with Claude Code and Codex | Whoever's key is in the environment, and the agent users' accounts |
 
 The important points:
 
@@ -206,10 +206,11 @@ dotnet build ChatbotAddonDemo.sln
 # Console tool
 .\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe help
 
-# Tests. No network, no key, nothing billed. The UI tests open the app off-screen.
+# Tests. Nothing billed: the AI paths talk to a fake AI gateway on 127.0.0.1. The UI tests open the app off-screen.
 dotnet test ChatbotAddonDemo.sln
 
-# 💲 Paid live-API smoke tests (one short chat, a few requests, per provider), only when you explicitly opt in
+# 💲 Paid live tests, only when you explicitly opt in: the same job with real Claude and OpenAI (path C)
+# and real Claude Code and Codex (path D). Roughly $1 in all; the chat and Claude Code stop at $0.50 each.
 $env:DEMO_LIVE_TESTS = '1'; dotnet test --filter Category=Live
 
 # Re-render every diagram to PNG (docs/images/diagrams) after editing one. Needs Node.js and Chrome or Edge; headless.
@@ -250,7 +251,7 @@ src/
   Demo.Ai/             Calling Claude/OpenAI (IChatClient), chat loop with approvals, credentials, cost meter.
   Demo.Desktop/        demo-desktop.exe, the WPF app: the legacy screens + the opt-in chat panel.
   Demo.Cli/            demo-cli.exe, the console tool: the legacy commands + `demo-cli mcp` for coding agents.
-tests/                 Domain, capabilities, AI (scripted model), CLI/MCP end-to-end, desktop UI tests.
+tests/                 Domain, capabilities, AI (scripted model), CLI/MCP end-to-end, every path with the same job, desktop UI tests.
 tools/Demo.Screenshots Drives the apps and renders docs/images.
 docs/                  Design, decision records, security, guides, images.
 scripts/               capture-screenshots.ps1
