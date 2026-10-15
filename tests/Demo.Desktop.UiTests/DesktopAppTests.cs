@@ -24,7 +24,7 @@ public sealed class DesktopAppTests : IDisposable
     private DesktopDriver Launch(AiSettings settings)
     {
         new AiSettingsStore(Path.Combine(_profile, "settings.json")).Save(settings);
-        return DesktopDriver.Launch(RepoFile(@"src\Demo.Desktop\bin\{0}\net10.0-windows\Demo.Desktop.exe"), "--demo", "--profile", _profile, "--workspace", Workspace);
+        return DesktopDriver.Launch(RepoFile(@"src\Demo.Desktop\bin\{0}\net10.0-windows\demo-desktop.exe"), "--demo", "--profile", _profile, "--workspace", Workspace);
     }
 
     [Fact]

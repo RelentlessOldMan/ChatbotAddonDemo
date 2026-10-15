@@ -22,7 +22,7 @@ flowchart LR
     eng(["Engineer"])
     dev(["Engineer with<br/>a coding agent"])
 
-    subgraph desktop["Demo.Desktop.exe (WPF app)"]
+    subgraph desktop["demo-desktop.exe (WPF app)"]
         ui["Screens"]
         chat["Chat panel<br/>(opt-in)"]
         dcap["Tools for AI<br/>what it may do,<br/>with permissions"]
@@ -133,10 +133,10 @@ Requires Windows and the .NET 10 SDK.
 dotnet build ChatbotAddonDemo.sln
 
 # Desktop app in demo mode: fresh example workspace, scripted assistant, no key needed
-.\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe --demo
+.\src\Demo.Desktop\bin\Debug\net10.0-windows\demo-desktop.exe --demo
 
 # Desktop app for real (workspace in %LOCALAPPDATA%\ChatbotAddonDemo\workspace); turn on AI in Settings
-.\src\Demo.Desktop\bin\Debug\net10.0-windows\Demo.Desktop.exe
+.\src\Demo.Desktop\bin\Debug\net10.0-windows\demo-desktop.exe
 
 # Console tool
 .\src\Demo.Cli\bin\Debug\net10.0\demo-cli.exe help
@@ -171,8 +171,8 @@ src/
   Demo.Domain/         Core logic: plans (XML + XSD), spec import, simulated bench, result files, plots, analysis. No AI.
   Demo.Capabilities/   The capability catalog: what AI may do (Read / Write / Execute), defined once.
   Demo.Ai/             Calling Claude/OpenAI (IChatClient), chat loop with approvals, credentials, cost meter.
-  Demo.Desktop/        WPF app: the legacy screens + the opt-in chat panel.
-  Demo.Cli/            Console tool: the legacy commands + `demo-cli mcp` for coding agents.
+  Demo.Desktop/        demo-desktop.exe, the WPF app: the legacy screens + the opt-in chat panel.
+  Demo.Cli/            demo-cli.exe, the console tool: the legacy commands + `demo-cli mcp` for coding agents.
 tests/                 Domain, capabilities, AI (scripted model), CLI/MCP end-to-end, desktop UI tests.
 tools/Demo.Screenshots Drives the apps and renders docs/images.
 docs/                  Design, decision records, security, guides, images.

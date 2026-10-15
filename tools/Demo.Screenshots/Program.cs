@@ -10,7 +10,7 @@ namespace Demo.Screenshots;
 
 /// <summary>
 /// Regenerates every image in docs/images by driving the real apps. Usage:
-///   Demo.Screenshots --desktop path\Demo.Desktop.exe --cli path\demo-cli.exe --out docs\images
+///   Demo.Screenshots --desktop path\demo-desktop.exe --cli path\demo-cli.exe --out docs\images
 /// Normally run via scripts/capture-screenshots.ps1.
 /// </summary>
 public static class Program

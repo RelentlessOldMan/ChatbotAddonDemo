@@ -3,7 +3,7 @@
   Rebuilds the apps and regenerates every image in docs/images by driving the real UI.
 
 .DESCRIPTION
-  Runs Demo.Desktop in --demo mode (example workspace, scripted assistant, throwaway profile),
+  Runs demo-desktop.exe in --demo mode (example workspace, scripted assistant, throwaway profile),
   clicks through the walkthrough with UI Automation (FlaUI), runs real demo-cli commands and a
   real MCP session, and renders everything to PNG. No API key or network access is needed.
 
@@ -19,7 +19,7 @@ $root = Split-Path -Parent $PSScriptRoot
 dotnet build "$root\ChatbotAddonDemo.sln" -c $Configuration -v q -nologo
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
-$desktop = "$root\src\Demo.Desktop\bin\$Configuration\net10.0-windows\Demo.Desktop.exe"
+$desktop = "$root\src\Demo.Desktop\bin\$Configuration\net10.0-windows\demo-desktop.exe"
 $cli = "$root\src\Demo.Cli\bin\$Configuration\net10.0\demo-cli.exe"
 $tool = "$root\tools\Demo.Screenshots\bin\$Configuration\net10.0-windows\Demo.Screenshots.exe"
 

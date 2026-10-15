@@ -6,7 +6,7 @@
 Engineers who use coding agents (Claude Code, Codex, Cursor) want those agents to drive our tool. MCP is the standard way to do that. We have two programs that could host an MCP server:
 
 - **demo-cli.exe**, a short-lived console process.
-- **Demo.Desktop.exe**, a long-running WPF app that the engineer may or may not have open.
+- **demo-desktop.exe**, a long-running WPF app that the engineer may or may not have open.
 
 ## Options
 1. **Console tool only, over stdio.** The agent starts `demo-cli mcp` as a child process and talks over stdin/stdout. No port, no token: the process runs as the user who configured the agent, with their permissions, and only for as long as the agent session.

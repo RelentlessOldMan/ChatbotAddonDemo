@@ -66,14 +66,14 @@ The simulated bench produces realistic data: temperature drift, unit-to-unit spr
 
 ## 3. Who calls what: the runtime picture
 
-There are **two programs** (`Demo.Desktop.exe` and `demo-cli.exe`) and **four ways in**: two that existed before AI (A and B) and two that the AI work adds (C and D).
+There are **two programs** (`demo-desktop.exe` and `demo-cli.exe`) and **four ways in**: two that existed before AI (A and B) and two that the AI work adds (C and D).
 
 ```mermaid
 flowchart TB
     eng(["Engineer"])
     dev(["Engineer with a coding agent"])
 
-    subgraph desktop["Demo.Desktop.exe: the WPF app"]
+    subgraph desktop["demo-desktop.exe: the WPF app"]
         direction TB
         ui["Screens<br/>plans · runs · spec sheets"]
         chat["Chat panel<br/>(off until enabled)"]
@@ -160,7 +160,7 @@ What the customer sees and controls: the panel shows tokens used and an estimate
 
 | Program | What it's for | Why it exists in the demo |
 |---|---|---|
-| **Demo.Desktop.exe** (WPF) | The everyday tool: look at plans, run them, review results and plots. | The **chat assistant lives here** because this is where non-technical users already are. It also knows what the user is looking at (`get_current_view`), so "analyze this run" works. |
+| **demo-desktop.exe** (WPF) | The everyday tool: look at plans, run them, review results and plots. | The **chat assistant lives here** because this is where non-technical users already are. It also knows what the user is looking at (`get_current_view`), so "analyze this run" works. |
 | **demo-cli.exe** (console) | Scripted and batch work, e.g. nightly runs or CI. | **Coding agents connect here** (`demo-cli mcp`). An agent can start it on demand: no app needs to be open, there is no port to secure, and no token. See [ADR-004](adr/004-mcp-via-console-tool.md). There is **no chat** in the console tool: its users automate, and their AI is the agent. See [ADR-005](adr/005-no-chat-in-cli.md). |
 
 ### The libraries inside them
@@ -387,8 +387,8 @@ flowchart BT
     domain["Demo.Domain<br/>core logic"]
     caps["Demo.Capabilities<br/>tools for AI (capability catalog)"]
     ai["Demo.Ai<br/>model clients, chat loop, credentials"]
-    desk["Demo.Desktop<br/>WPF app"]
-    cli["Demo.Cli<br/>console tool + MCP server mode"]
+    desk["Demo.Desktop<br/>demo-desktop.exe, WPF app"]
+    cli["Demo.Cli<br/>demo-cli.exe, console tool + MCP server mode"]
     caps --> domain
     ai --> caps
     desk --> ai
