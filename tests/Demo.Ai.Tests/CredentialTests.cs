@@ -7,9 +7,9 @@ namespace Demo.Ai.Tests;
 
 public class CredentialTests
 {
-    private sealed class FakePolicy(Uri? gateway = null, string? token = null, bool disableUserKeys = false) : IMachinePolicy
+    private sealed class FakePolicy(string? gateway = null, string? token = null, bool disableUserKeys = false) : IMachinePolicy
     {
-        public Uri? GatewayUrl(AiProvider provider) => gateway;
+        public string? GatewayUrl(AiProvider provider) => gateway;
         public string? GatewayToken(AiProvider provider) => token;
         public bool DisableUserKeys => disableUserKeys;
     }
@@ -49,7 +49,7 @@ public class CredentialTests
         Assert.Equal(CredentialSource.UserKey, Resolver(store).Resolve(AiProvider.Anthropic).Source);
         Assert.Equal("env-key", Resolver(store, env: env).Resolve(AiProvider.Anthropic).ApiKey);
 
-        var gateway = Resolver(store, new FakePolicy(new Uri("https://llm.corp.example/anthropic"), "gw-token"), env).Resolve(AiProvider.Anthropic);
+        var gateway = Resolver(store, new FakePolicy("https://llm.corp.example/anthropic", "gw-token"), env).Resolve(AiProvider.Anthropic);
         Assert.Equal(CredentialSource.Gateway, gateway.Source);
         Assert.Equal("gw-token", gateway.ApiKey);
         Assert.Equal("Your organization's AI gateway (llm.corp.example)", gateway.Describe());
@@ -73,7 +73,7 @@ public class CredentialTests
 
         Assert.False(Resolver(new InMemoryCredentialStore(), new FakePolicy(disableUserKeys: true), env).Resolve(AiProvider.Anthropic).IsAvailable);
 
-        var gateway = Resolver(new InMemoryCredentialStore(), new FakePolicy(new Uri("https://llm.corp.example/"), disableUserKeys: true), env).Resolve(AiProvider.Anthropic);
+        var gateway = Resolver(new InMemoryCredentialStore(), new FakePolicy("https://llm.corp.example/", disableUserKeys: true), env).Resolve(AiProvider.Anthropic);
         Assert.Equal(CredentialSource.Gateway, gateway.Source);
     }
 
@@ -85,7 +85,7 @@ public class CredentialTests
         var store = new InMemoryCredentialStore();
         store.Set(CredentialResolver.KeyName(AiProvider.Anthropic), "user-key");
 
-        var resolved = Resolver(store, new FakePolicy(new Uri(url), "gw-token")).Resolve(AiProvider.Anthropic);
+        var resolved = Resolver(store, new FakePolicy(url, "gw-token")).Resolve(AiProvider.Anthropic);
 
         Assert.False(resolved.IsAvailable); // and no fallback to the personal key
         Assert.Null(resolved.ApiKey);
@@ -95,11 +95,29 @@ public class CredentialTests
     }
 
     [Theory]
+    [InlineData("llm.corp.example/anthropic")] // no scheme: not an absolute address
+    [InlineData("https://")]
+    [InlineData("not a url")]
+    [InlineData("")] // present but empty is still "IT set a gateway"
+    public void Gateway_that_is_not_a_valid_address_blocks_personal_keys(string url)
+    {
+        var store = new InMemoryCredentialStore();
+        store.Set(CredentialResolver.KeyName(AiProvider.Anthropic), "user-key");
+        var env = new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "env-key" };
+
+        var resolved = Resolver(store, new FakePolicy(url, "gw-token"), env).Resolve(AiProvider.Anthropic);
+
+        Assert.False(resolved.IsAvailable); // IT set a gateway: never fall back, even when it's misconfigured
+        Assert.Null(resolved.ApiKey);
+        Assert.Contains("isn't a valid address", resolved.Describe());
+    }
+
+    [Theory]
     [InlineData("http://localhost:4000/")]
     [InlineData("http://127.0.0.1:4000/")]
     [InlineData("http://[::1]:4000/")]
     public void Gateway_on_this_pc_may_use_http(string url) =>
-        Assert.Equal(CredentialSource.Gateway, Resolver(new InMemoryCredentialStore(), new FakePolicy(new Uri(url))).Resolve(AiProvider.OpenAI).Source);
+        Assert.Equal(CredentialSource.Gateway, Resolver(new InMemoryCredentialStore(), new FakePolicy(url)).Resolve(AiProvider.OpenAI).Source);
 
     [Fact]
     public void OpenAI_storage_stays_off_even_with_a_caller_supplied_options_factory()
@@ -190,6 +208,93 @@ public class CredentialTests
     }
 
     [Theory]
+    [InlineData("""{ "ChatEnabled": true, "Provider": 7 }""")]
+    [InlineData("""{ "ChatEnabled": true, "Provider": "Gemini" }""")]
+    [InlineData("""{ "ChatEnabled": true, "Models": null }""")]
+    [InlineData("""{ "ChatEnabled": true, "Models": { "OpenAI": null } }""")]
+    [InlineData("""{ "ChatEnabled": true, "SessionSpendCapUsd": -5 }""")]
+    [InlineData("null")]
+    public void Damaged_settings_load_as_something_usable(string json)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, json);
+            var loaded = new AiSettingsStore(path).Load();
+
+            Assert.Equal(ProviderInfo.For(loaded.Provider).DefaultModel, loaded.ModelFor(loaded.Provider)); // doesn't throw
+            Assert.Equal("gpt-6-astra", loaded.ModelFor(AiProvider.OpenAI));
+            Assert.True(loaded.SessionSpendCapUsd is null or > 0);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("5", "5")]
+    [InlineData("1.50", "1.50")]
+    [InlineData(" $2.25 ", "2.25")]
+    [InlineData("$ 3", "3")]
+    [InlineData(".5", "0.5")]
+    public void Spend_limit_accepts_dollar_amounts_and_only_empty_means_no_limit(string text, string? expected)
+    {
+        Assert.True(SpendLimitText.TryParse(text, out var limit));
+        Assert.Equal(expected is null ? null : decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), limit);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("0.00")]
+    [InlineData("-1")]
+    [InlineData("5 USD")]
+    [InlineData("1,50")] // 1.5 in some regions, 150 in others: refused rather than guessed
+    [InlineData("1,000")]
+    [InlineData("1e3")]
+    [InlineData("abc")]
+    [InlineData("$")]
+    [InlineData("$$5")]
+    public void Spend_limit_refuses_anything_else(string text) =>
+        Assert.False(SpendLimitText.TryParse(text, out _));
+
+    [Fact]
+    public void Spend_limit_reads_a_dot_as_the_decimal_point_in_any_region()
+    {
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+            Assert.True(SpendLimitText.TryParse("1.50", out var limit));
+            Assert.Equal(1.50m, limit);
+            Assert.Equal("1.50", SpendLimitText.Format(1.5m)); // and shows it the same way, so it reads back the same
+            Assert.Equal("", SpendLimitText.Format(null));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = saved;
+        }
+    }
+
+    [Fact]
+    public void Settings_file_that_cannot_be_read_loads_defaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """{ "ChatEnabled": true }""");
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)) // held open by something else
+                Assert.False(new AiSettingsStore(path).Load().ChatEnabled);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
     [InlineData(AiProvider.Anthropic)]
     [InlineData(AiProvider.OpenAI)]
     public void Factory_builds_clients_for_both_providers_without_network(AiProvider provider)
@@ -198,6 +303,27 @@ public class CredentialTests
         Assert.NotNull(client);
         using var gateway = ChatClientFactory.Create(provider, "model-x", new ResolvedCredential(CredentialSource.Gateway, null, new Uri("https://gw.example/")));
         Assert.NotNull(gateway);
+    }
+
+    [Fact]
+    public void Anthropic_address_cannot_be_redirected_by_an_environment_variable()
+    {
+        const string variable = "ANTHROPIC_BASE_URL";
+        var saved = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "http://attacker.example");
+            Assert.Equal("http://attacker.example", new Anthropic.AnthropicClient { ApiKey = "k" }.BaseUrl); // what the SDK does left to itself
+
+            var personal = ChatClientFactory.CreateAnthropicClient(new ResolvedCredential(CredentialSource.UserKey, "k"));
+            Assert.Equal("https://api.anthropic.com", personal.BaseUrl);
+            var gateway = ChatClientFactory.CreateAnthropicClient(new ResolvedCredential(CredentialSource.Gateway, null, new Uri("https://gw.example/anthropic")));
+            Assert.Equal("https://gw.example/anthropic", gateway.BaseUrl);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, saved);
+        }
     }
 
     [Fact]

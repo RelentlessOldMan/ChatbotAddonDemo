@@ -19,7 +19,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _chatEnabled = _original.ChatEnabled;
         _useOpenAI = _original.Provider == AiProvider.OpenAI;
         _model = _original.ModelFor(_original.Provider);
-        _spendCap = _original.SessionSpendCapUsd?.ToString("0.00") ?? "";
+        _spendCap = SpendLimitText.Format(_original.SessionSpendCapUsd);
         RefreshCredential();
     }
 
@@ -35,7 +35,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     private bool _useOpenAI;
 
     [ObservableProperty] private string _model;
-    [ObservableProperty] private string _spendCap;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SpendCapError), nameof(CanSave))]
+    private string _spendCap;
+
+    /// <summary>Shown under the limit box; empty while what's typed is a valid limit (or empty, for none).</summary>
+    public string SpendCapError => SpendLimitText.TryParse(SpendCap, out _) ? "" : SpendLimitText.Problem;
+
+    /// <summary>Save stays disabled while the limit is invalid, so a typo can never turn into "no limit".</summary>
+    public bool CanSave => SpendLimitText.TryParse(SpendCap, out _);
+
+    /// <summary>
+    /// Saving or removing a key takes effect at once, not on Save, so the open chat must be rebuilt
+    /// when the dialog closes even if it was cancelled.
+    /// </summary>
+    public bool CredentialsChanged { get; private set; }
     [ObservableProperty] private string _credentialDescription = "";
     [ObservableProperty] private bool _hasCredential;
     [ObservableProperty] private string _testResult = "";
@@ -55,6 +69,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(key)) return;
         _services.Credentials.SaveUserKey(Provider, key);
+        CredentialsChanged = true;
         RefreshCredential();
         TestResult = "Key saved (encrypted for your Windows account).";
     }
@@ -63,6 +78,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void RemoveKey()
     {
         _services.Credentials.RemoveUserKey(Provider);
+        CredentialsChanged = true;
         RefreshCredential();
         TestResult = "Key removed.";
     }
@@ -96,15 +112,18 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     // ---- Save ----------------------------------------------------------------------
 
-    public void Save()
+    /// <summary>Returns false (and saves nothing) while the spending limit is invalid.</summary>
+    public bool Save()
     {
+        if (!SpendLimitText.TryParse(SpendCap, out var cap)) return false;
         var models = new Dictionary<AiProvider, string>(_original.Models) { [Provider] = Model.Trim() };
         _services.Settings.Save(_original with
         {
             ChatEnabled = ChatEnabled,
             Provider = Provider,
             Models = models,
-            SessionSpendCapUsd = decimal.TryParse(SpendCap, out var cap) && cap > 0 ? cap : null,
+            SessionSpendCapUsd = cap,
         });
+        return true;
     }
 }

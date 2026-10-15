@@ -28,19 +28,24 @@ public static class ChatClientFactory
         };
     }
 
-    private static IChatClient CreateAnthropic(string model, ResolvedCredential credential)
-    {
-        var client = credential.BaseUrl is null
-            ? new AnthropicClient { ApiKey = credential.ApiKey }
-            : new AnthropicClient { ApiKey = credential.ApiKey, BaseUrl = credential.BaseUrl.ToString() };
-        return client.AsIChatClient(model, MaxOutputTokens);
-    }
+    /// <summary>The official OpenAI endpoint, used whenever IT hasn't set a gateway.</summary>
+    internal static readonly Uri OpenAIApi = new("https://api.openai.com/v1");
+
+    private static IChatClient CreateAnthropic(string model, ResolvedCredential credential) =>
+        CreateAnthropicClient(credential).AsIChatClient(model, MaxOutputTokens);
+
+    /// <summary>
+    /// The address is always set explicitly: left unset, the SDK reads ANTHROPIC_BASE_URL from the environment,
+    /// so anything that can set an environment variable could send the user's key and data elsewhere.
+    /// </summary>
+    internal static AnthropicClient CreateAnthropicClient(ResolvedCredential credential) =>
+        new() { ApiKey = credential.ApiKey, BaseUrl = credential.BaseUrl?.ToString() ?? Anthropic.Core.EnvironmentUrl.Production };
 
 #pragma warning disable OPENAI001 // The SDK still marks its Responses API as experimental.
     private static IChatClient CreateOpenAI(string model, ResolvedCredential credential)
     {
-        var options = new OpenAIClientOptions();
-        if (credential.BaseUrl is not null) options.Endpoint = credential.BaseUrl;
+        // The OpenAI SDK reads no address from the environment, but it's pinned as for Anthropic so it never can.
+        var options = new OpenAIClientOptions { Endpoint = credential.BaseUrl ?? OpenAIApi };
         // A gateway may authenticate by network identity and need no token; the SDK still requires a value.
         var client = new OpenAIClient(new ApiKeyCredential(credential.ApiKey ?? "gateway"), options);
         // The Responses API, not Chat Completions: current models reject function tools plus reasoning on

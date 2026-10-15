@@ -21,7 +21,6 @@ public partial class SettingsWindow : Window
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        _viewModel.Save();
-        DialogResult = true;
+        if (_viewModel.Save()) DialogResult = true; // otherwise the limit box shows what's wrong
     }
 }

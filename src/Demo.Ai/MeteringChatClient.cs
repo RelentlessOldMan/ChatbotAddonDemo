@@ -7,6 +7,8 @@ namespace Demo.Ai;
 /// Meters every individual model request and enforces the chat's limit before each one. It sits *below*
 /// the function-invocation layer, so it also sees the automatic tool round trips inside a single user message,
 /// and records each request's usage as soon as it completes (a later failure or Stop doesn't lose it).
+/// <see cref="UsageMeter.Changed"/> is therefore raised on whatever thread the request finished on, which is
+/// often not the UI thread.
 /// </summary>
 public sealed class MeteringChatClient(IChatClient innerClient, UsageMeter meter) : DelegatingChatClient(innerClient)
 {
