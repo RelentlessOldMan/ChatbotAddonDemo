@@ -518,6 +518,28 @@ public sealed class TestBenchServiceTests : IDisposable
         Assert.DoesNotContain(summary.Findings, f => f.TestId == "IQ" && f.Text.Contains("limit window"));
     }
 
+    [Fact]
+    public async Task A_run_seen_as_finished_already_has_all_its_files()
+    {
+        // demo-cli prints the findings and exits as soon as it sees the run finished, which ends the process.
+        // So by then run.json, summary.csv and the plots must be written. Polled as fast as possible, many times,
+        // to land in the gap between the last measurement and the last file if there is one.
+        var plan = HotCold();
+        for (var i = 0; i < 10; i++)
+        {
+            var run = _bench.StartRun(plan.Id);
+            while (run.Status == RunStatus.Running)
+                run = await _bench.WaitForRunAsync(run.Id, TimeSpan.Zero, TestContext.Current.CancellationToken);
+
+            var onDisk = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(_bench.Files(run.Id).Folder, "run.json")));
+            Assert.Equal(RunStatus.Completed, run.Status);
+            Assert.Equal("Completed", onDisk.GetProperty("Status").GetString());
+            Assert.True(File.Exists(Path.Combine(_bench.Files(run.Id).Folder, "summary.csv")), $"{run.Id} has no summary.csv");
+            await _bench.WaitForRunAsync(run.Id, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken); // let the bench go idle
+            while (_bench.BenchBusyWith() is not null) await Task.Delay(1, TestContext.Current.CancellationToken);
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_workspace, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }

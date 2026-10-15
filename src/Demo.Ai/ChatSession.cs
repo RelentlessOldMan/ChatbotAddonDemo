@@ -92,7 +92,7 @@ public sealed class ChatSession
                 // Recorded before the limits are checked, so a refused request still leaves its record.
                 _lastModelRequest = messages.ToList();
                 if (++_requestsThisMessage > _maxRequestsPerMessage) throw new TurnRequestLimitException(_maxRequestsPerMessage);
-                await next(_lastModelRequest, chatOptions, cancellationToken);
+                await next(WithoutApprovalBookkeeping(_lastModelRequest), chatOptions, cancellationToken);
             })
             .Use(inner => new MeteringChatClient(inner, meter)) // enforces the spending limit before every request
             .Build();
@@ -173,6 +173,14 @@ public sealed class ChatSession
     }
 
     private static readonly IReadOnlyDictionary<string, object?> EmptyArguments = new Dictionary<string, object?>();
+
+    /// <summary>
+    /// The messages that held approval questions and answers are our bookkeeping, not conversation: by the time a
+    /// request goes out, the function-invocation layer has already turned each answer into the tool call and its
+    /// result (or "declined"). Left in, the OpenAI adapter sends such a message as an empty user message.
+    /// </summary>
+    private static List<ChatMessage> WithoutApprovalBookkeeping(List<ChatMessage> messages) =>
+        messages.Where(m => !m.Contents.All(c => c is ToolApprovalRequestContent or ToolApprovalResponseContent)).ToList();
 
     /// <summary>
     /// After a failure or Stop, keeps the part of this message's exchange that really happened and can be sent

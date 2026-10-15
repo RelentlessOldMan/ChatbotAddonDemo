@@ -308,18 +308,21 @@ public sealed class TestBenchService
             }
 
             var rows = ResultFiles.ReadCsv(resultsPath);
-            var finished = active.Finish(RunStatus.Completed, _time.GetLocalNow());
+            // Files first, status second: anyone who sees the run finished (WaitForRunAsync's caller, which may
+            // print and exit at once, ending this process) can rely on its files being complete.
+            var finished = active.Ending(RunStatus.Completed, _time.GetLocalNow());
             ResultFiles.WriteSummaryCsv(RunAnalyzer.Analyze(finished, plan, rows, MeasurementFilter.All), Path.Combine(RunFolder(id), "summary.csv"));
             ResultFiles.WritePlots(plan, rows, Path.Combine(RunFolder(id), "plots"));
             SaveRun(finished); // if this fails, the run is marked Failed below, with the reason
+            active.Publish(finished);
         }
         catch (OperationCanceledException)
         {
-            TrySaveRun(active.Finish(RunStatus.Cancelled, _time.GetLocalNow()));
+            SaveThenPublish(active, active.Ending(RunStatus.Cancelled, _time.GetLocalNow()));
         }
         catch (Exception ex)
         {
-            TrySaveRun(active.Finish(RunStatus.Failed, _time.GetLocalNow(), ex.Message));
+            SaveThenPublish(active, active.Ending(RunStatus.Failed, _time.GetLocalNow(), ex.Message));
         }
         finally
         {
@@ -427,6 +430,12 @@ public sealed class TestBenchService
         }
     }
 
+    private void SaveThenPublish(ActiveRun active, TestRun final)
+    {
+        TrySaveRun(final);
+        active.Publish(final);
+    }
+
     /// <summary>The save after a run has already gone wrong: there is nobody left to report a second failure to.</summary>
     private void TrySaveRun(TestRun run)
     {
@@ -523,9 +532,15 @@ public sealed class TestBenchService
             lock (_gate) _run = _run with { Completed = _run.Completed + 1, Failed = _run.Failed + (pass ? 0 : 1), Heartbeat = now };
         }
 
-        public TestRun Finish(RunStatus status, DateTimeOffset now, string? error = null)
+        /// <summary>The run as it will be once finished; nobody sees it until <see cref="Publish"/>.</summary>
+        public TestRun Ending(RunStatus status, DateTimeOffset now, string? error = null)
         {
-            lock (_gate) return _run = _run with { Status = status, Finished = now, Heartbeat = now, Error = error };
+            lock (_gate) return _run with { Status = status, Finished = now, Heartbeat = now, Error = error };
+        }
+
+        public void Publish(TestRun final)
+        {
+            lock (_gate) _run = final;
         }
     }
 }
