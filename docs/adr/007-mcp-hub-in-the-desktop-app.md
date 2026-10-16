@@ -46,6 +46,6 @@ ADR-004 let coding agents in only through the console tool (`demo-cli mcp`) and 
 - **The desktop app depends on the MCP SDK** (through `Demo.Mcp`).
 - **Agents get `get_current_view`**, so they can ask what the user is looking at.
 - **Only one TestBench window per Windows user can let agents in.** A second window's agent panel says so.
-- **Outside servers can be slow or broken.** The hub connects them side by side and gives each one 30 seconds. A server that fails is skipped, and the chat shows a notice naming it, so one broken server never blocks the assistant.
+- **Outside servers can be slow or broken.** The hub connects them side by side and gives each one 30 seconds. A server that fails is skipped, and the chat shows a notice naming it, so one broken server never blocks the assistant. The same goes for a single tool whose inputs the AI providers would refuse: every tool goes out with every message, so one such tool would otherwise fail every message.
 - **Outside tools send data to the chat's model.** Their results go to the provider in the next request, like any tool result: 💲 tokens, and data leaving the PC. That's why each use asks first by default, and why IT decides which servers are trusted.
 - **A server started from a command line runs as the user**, with the user's rights. Only add servers you trust; IT can limit the list.

@@ -28,6 +28,11 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _services = services;
         Agents = new AgentPanelViewModel(Application.Current.Dispatcher);
+        Agents.TryAgainRequested += () =>
+        {
+            Agents.Problem = null;
+            ApplyAgentSettings(IsAgentPanelVisible);
+        };
 
         // Changes arrive from the screens, the bench thread, the assistant or a coding agent. All of them go through
         // this app's own bench service (AI through the hub), whose Changed event schedules a refresh from disk.

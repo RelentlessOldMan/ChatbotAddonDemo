@@ -83,6 +83,32 @@ public sealed class DesktopAppTests : IDisposable
     }
 
     [Fact]
+    public void A_second_window_says_agents_are_taken_and_can_try_again_once_the_first_closes()
+    {
+        var first = Launch(new AiSettings { AgentsEnabled = true });
+        var firstOpen = true;
+        first.WaitUntil(() => first.Find("AgentStatus").Name == "Waiting for a coding agent", "the first window to let agents in");
+        var secondProfile = _profile + "-second";
+        new AiSettingsStore(Path.Combine(secondProfile, "settings.json")).Save(new AiSettings { AgentsEnabled = true });
+        try
+        {
+            using var second = DesktopDriver.Launch(DesktopExe, "--demo", "--profile", secondProfile, "--workspace", Path.Combine(secondProfile, "workspace"), "--agent-pipe", _agentPipe);
+            second.WaitUntil(() => second.Find("AgentStatus").Name.StartsWith("Another TestBench window"), "the second window to say agents are taken");
+
+            first.Dispose(); // the user closes the first window
+            firstOpen = false;
+            second.Click("AgentTryAgain");
+
+            second.WaitUntil(() => second.Find("AgentStatus").Name == "Waiting for a coding agent", "the second window to let agents in");
+        }
+        finally
+        {
+            if (firstOpen) first.Dispose();
+            try { Directory.Delete(secondProfile, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
     public void The_legacy_UI_still_runs_plans_without_any_AI()
     {
         using var d = Launch(new AiSettings());

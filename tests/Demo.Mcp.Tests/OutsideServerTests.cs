@@ -3,8 +3,8 @@ namespace Demo.Mcp.Tests;
 /// <summary>Which outside servers the chat may use: the user's choices, IT's, and the rules between them.</summary>
 public sealed class OutsideServerTests
 {
-    private static OutsideServer It(string name, bool trusted = false) => new(name, $"{name}.exe", trusted, ServerOrigin.Policy);
-    private static OutsideServer Mine(string name, bool trusted = false) => new(name, $"my-{name}.exe", trusted, ServerOrigin.User);
+    private static OutsideServer It(string name, bool trusted = false) => new(name, $"{name}.exe", trusted);
+    private static OutsideServer Mine(string name, bool trusted = false) => new(name, $"my-{name}.exe", trusted);
 
     [Fact]
     public void IT_servers_come_first_and_the_users_follow()
@@ -36,7 +36,7 @@ public sealed class OutsideServerTests
     {
         var servers = OutsideServer.Combine([It("perforce")], [Mine("github")], userServersAllowed: false);
 
-        Assert.Equal(ServerOrigin.Policy, Assert.Single(servers).Origin);
+        Assert.Equal("perforce", Assert.Single(servers).Name);
     }
 
     [Theory]
@@ -49,7 +49,7 @@ public sealed class OutsideServerTests
     [InlineData("empty", "  ", "has no command or address")]
     public void Each_entry_is_checked_before_it_is_used(string name, string target, string? problem)
     {
-        var found = new OutsideServer(name, target, false, ServerOrigin.User).Problem();
+        var found = new OutsideServer(name, target, false).Problem();
 
         if (problem is null) Assert.Null(found);
         else Assert.Contains(problem, found);

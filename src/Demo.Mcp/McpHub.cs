@@ -30,8 +30,9 @@ public sealed class McpHub(CapabilityCatalog catalog, string serverName, string 
 
     /// <summary>
     /// Path C3: the chat panel's connection. Returns the app's own tools, as they come back over MCP, plus the
-    /// tools of every outside server that could be reached. A server that can't be reached is skipped and named
-    /// in <see cref="HubTools.Problems"/>: one broken server never stops the chat.
+    /// tools of every outside server that could be reached. A server that can't be reached, or a tool whose inputs
+    /// the AI providers would refuse, is skipped and named in <see cref="HubTools.Problems"/>: one broken server never
+    /// stops the chat.
     /// </summary>
     public async Task<HubTools> ConnectChatAsync(IReadOnlyList<OutsideServer> outside, CancellationToken cancellationToken)
     {
@@ -60,6 +61,11 @@ public sealed class McpHub(CapabilityCatalog catalog, string serverName, string 
                 {
                     var name = PrefixedName(server, tool.Name);
                     if (capabilities.Any(c => c.Name == name)) continue; // a clash can only come from a server reusing a name
+                    if (McpCapabilities.SchemaProblem(tool.JsonSchema) is { } schemaProblem)
+                    {
+                        problems.Add($"Left out {server.Name}'s tool '{tool.Name}': {schemaProblem}, which the AI providers don't accept.");
+                        continue;
+                    }
                     capabilities.Add(McpCapabilities.FromOutsideTool(tool, server, name));
                 }
             }

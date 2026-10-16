@@ -32,7 +32,7 @@ The paths below are for an installed copy. **From a clone of this repo**, build 
 - **Lookups run on their own** and are listed in the panel.
 - **Creating a file or using the bench waits for you**: a card such as "Claude Code wants to create a file" shows the exact details. **Approve** goes ahead. **Deny** changes nothing, and your agent is told: "The user declined this in TestBench, so nothing was changed. Don't try again unless they ask you to."
 - Your agent sees TestBench's own 14 tools only, never those of other MCP servers the assistant may use.
-- Only one TestBench window per Windows user can let agents connect. A second one says "Another TestBench window already lets coding agents connect."
+- Only one TestBench window per Windows user can let agents connect. A second one says "Another TestBench window already lets coding agents connect." Close the other window, then click **Try again**.
 - If TestBench isn't open, or agents aren't allowed, the relay tells your agent: "TestBench isn't open, or it isn't letting coding agents connect. Open TestBench, turn on "Let coding agents connect" in Settings, then reconnect (in Claude Code: /mcp)."
 - Your IT department can turn this off. The checkbox is then greyed out.
 

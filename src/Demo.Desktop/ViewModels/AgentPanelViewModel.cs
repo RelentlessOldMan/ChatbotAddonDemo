@@ -23,8 +23,16 @@ public sealed partial class AgentPanelViewModel(Dispatcher dispatcher) : Observa
 
     /// <summary>Why agents can't connect (e.g. another TestBench window already lets them); null when they can.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(Status), nameof(HasProblem))]
     private string? _problem;
+
+    public bool HasProblem => Problem is not null;
+
+    /// <summary>The user wants to try again after <see cref="Problem"/>, e.g. once they've closed the other window.</summary>
+    public event Action? TryAgainRequested;
+
+    [RelayCommand]
+    private void TryAgain() => TryAgainRequested?.Invoke();
 
     public string Status => Problem ?? Connected switch
     {

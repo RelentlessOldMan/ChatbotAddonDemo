@@ -81,8 +81,8 @@ public sealed class AppServices
 
     /// <summary>The outside MCP servers the assistant connects to: IT's, then the user's own unless IT allows only its list.</summary>
     public IReadOnlyList<OutsideServer> OutsideServers(AiSettings settings) => OutsideServer.Combine(
-        Policy.McpServers.Select(s => new OutsideServer(s.Name, s.Command?.Trim() ?? "", s.Trusted, ServerOrigin.Policy)),
-        settings.McpServers.Select(s => new OutsideServer(s.Name.Trim(), s.Command.Trim(), Trusted: false, ServerOrigin.User)),
+        Policy.McpServers.Select(s => new OutsideServer(s.Name, s.Command?.Trim() ?? "", s.Trusted)),
+        settings.McpServers.Select(s => new OutsideServer(s.Name.Trim(), s.Command.Trim(), Trusted: false)),
         userServersAllowed: !Policy.DisableUserMcpServers);
 
     /// <summary>Where chat will connect, and who pays. In demo mode, nowhere.</summary>

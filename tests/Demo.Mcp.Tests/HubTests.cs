@@ -48,7 +48,7 @@ public sealed class HubTests : IAsyncDisposable
             new McpServerToolCreateOptions { Name = "get.repo" }),
     ];
 
-    private static OutsideServer Server(string name, bool trusted = false) => new(name, $"{name}-mcp.exe", trusted, ServerOrigin.User);
+    private static OutsideServer Server(string name, bool trusted = false) => new(name, $"{name}-mcp.exe", trusted);
 
     private async Task<HubTools> Connect(McpHub hub, params OutsideServer[] outside)
     {
@@ -71,6 +71,7 @@ public sealed class HubTests : IAsyncDisposable
         Assert.Equal(direct.Capabilities.Select(c => c.Function.JsonSchema.GetRawText()), tools.Catalog.Capabilities.Select(c => c.Function.JsonSchema.GetRawText()));
         Assert.All(tools.Catalog.Capabilities, c => Assert.Null(c.Server));
         Assert.Empty(tools.Problems);
+        Assert.All(tools.Catalog.Capabilities, c => Assert.Null(McpCapabilities.SchemaProblem(c.Function.JsonSchema))); // the check passes our own
     }
 
     [Fact]
@@ -210,11 +211,41 @@ public sealed class HubTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_tool_the_AI_providers_would_refuse_is_left_out_and_named_and_the_rest_still_work()
+    {
+        // Sent with every message, a tool the provider refuses would fail every chat message, not just itself.
+        FakeGitHub();
+        var odd = McpServerTool.Create((string query) => "never called", new McpServerToolCreateOptions { Name = "odd_search" });
+        odd.ProtocolTool.InputSchema = JsonDocument.Parse("""{"type":"object","properties":{"labels":{"type":"array"}}}""").RootElement.Clone();
+        _fakeServers["github"] = [.. _fakeServers["github"], odd];
+
+        var tools = await Connect(Hub(), Server("github"));
+
+        Assert.Equal("Left out github's tool 'odd_search': one of its inputs is a list that doesn't say what it holds, which the AI providers don't accept.",
+            Assert.Single(tools.Problems));
+        Assert.False(tools.Catalog.TryGet("github_odd_search", out _));
+        Assert.True(tools.Catalog.TryGet("github_search_issues", out _));
+    }
+
+    [Theory]
+    [InlineData("""{"type":"object"}""", null)]
+    [InlineData("""{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"}},"type":{"type":"string","enum":["array"]}}}""", null)]
+    [InlineData("""{"type":"object","properties":{"when":{"anyOf":[{"type":"string"},{"type":"null"}]}}}""", null)]
+    [InlineData("""{"type":"string"}""", "its inputs aren't described as an object")]
+    [InlineData("""{"properties":{}}""", "its inputs aren't described as an object")]
+    [InlineData("""{"type":"object","oneOf":[{"required":["a"]},{"required":["b"]}]}""", "its inputs use 'oneOf' at the top level")]
+    [InlineData("""{"type":"object","properties":{"grid":{"type":"array","items":{"type":["array","null"]}}}}""", "one of its inputs is a list that doesn't say what it holds")]
+    public void What_the_AI_providers_would_refuse(string schema, string? problem)
+    {
+        Assert.Equal(problem, McpCapabilities.SchemaProblem(JsonDocument.Parse(schema).RootElement));
+    }
+
+    [Fact]
     public async Task A_server_that_cant_be_reached_is_skipped_and_named()
     {
         FakeGitHub();
 
-        var tools = await Connect(Hub(), Server("perforce"), new OutsideServer("bad name!", "x", false, ServerOrigin.User), Server("github"));
+        var tools = await Connect(Hub(), Server("perforce"), new OutsideServer("bad name!", "x", false), Server("github"));
 
         Assert.Collection(tools.Problems,
             p => Assert.StartsWith("Couldn't connect to perforce", p),

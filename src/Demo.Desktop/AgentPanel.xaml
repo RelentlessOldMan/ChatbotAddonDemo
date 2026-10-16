@@ -17,6 +17,9 @@
                         <TextBlock Text="Coding agents" FontWeight="SemiBold" FontSize="14"/>
                         <TextBlock Text="{Binding Status}" Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap"
                                    AutomationProperties.AutomationId="AgentStatus"/>
+                        <Button Style="{StaticResource PlainButton}" Content="Try again" Padding="8,3" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                Command="{Binding TryAgainCommand}" Visibility="{Binding HasProblem, Converter={StaticResource BoolToVis}}"
+                                AutomationProperties.AutomationId="AgentTryAgain"/>
                     </StackPanel>
                 </DockPanel>
             </Border>

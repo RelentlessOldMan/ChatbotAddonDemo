@@ -34,7 +34,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         foreach (var server in _original.McpServers) AddServerRow(new McpServerRow { Name = server.Name, Command = server.Command });
         // What each is, not its whole command line, which can hold a token passed as an argument.
         PolicyServers = services.Policy.McpServers
-            .Select(p => $"{p.Name}: {(p.Command is { } c ? new OutsideServer(p.Name, c, p.Trusted, ServerOrigin.Policy).Summary : "(not usable)")}"
+            .Select(p => $"{p.Name}: {(p.Command is { } c ? new OutsideServer(p.Name, c, p.Trusted).Summary : "(not usable)")}"
                 + (p.Trusted ? " · runs without asking" : ""))
             .ToList();
         RefreshCredential();
@@ -106,7 +106,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             if (duplicate is not null) return $"Two servers are called '{duplicate.Key}': each needs its own name.";
             if (rows.FirstOrDefault(r => _policyServerNames.Contains(r.Name.Trim(), StringComparer.OrdinalIgnoreCase)) is { } taken)
                 return $"Your IT department already set up a server called '{taken.Name.Trim()}': pick another name.";
-            return rows.Select(r => new OutsideServer(r.Name.Trim(), r.Command.Trim(), false, ServerOrigin.User).Problem()).FirstOrDefault(p => p is not null) ?? "";
+            return rows.Select(r => new OutsideServer(r.Name.Trim(), r.Command.Trim(), false).Problem()).FirstOrDefault(p => p is not null) ?? "";
         }
     }
 

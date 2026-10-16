@@ -3,15 +3,12 @@ using ModelContextProtocol.Client;
 
 namespace Demo.Mcp;
 
-/// <summary>Who added an outside server: the user in Settings, or IT by policy.</summary>
-public enum ServerOrigin { User, Policy }
-
 /// <summary>
 /// Another MCP server the hub connects the chat to, e.g. Perforce, GitHub or Microsoft 365.
 /// <paramref name="Target"/> is either a command line that starts the server (talked to over its stdin/stdout)
 /// or the https address of a remote one.
 /// </summary>
-public sealed record OutsideServer(string Name, string Target, bool Trusted, ServerOrigin Origin)
+public sealed record OutsideServer(string Name, string Target, bool Trusted)
 {
     /// <summary>Names prefix every tool from the server (<c>github_search_issues</c>), so they're kept short and plain.</summary>
     public const int MaxNameLength = 20;
@@ -63,12 +60,12 @@ public sealed record OutsideServer(string Name, string Target, bool Trusted, Ser
     /// </summary>
     public static IReadOnlyList<OutsideServer> Combine(IEnumerable<OutsideServer> policy, IEnumerable<OutsideServer> user, bool userServersAllowed)
     {
-        var servers = policy.Select(s => s with { Origin = ServerOrigin.Policy }).ToList();
+        var servers = policy.ToList();
         if (userServersAllowed)
         {
             servers.AddRange(user
                 .Where(u => !servers.Any(s => string.Equals(s.Name, u.Name, StringComparison.OrdinalIgnoreCase)))
-                .Select(u => u with { Trusted = false, Origin = ServerOrigin.User }));
+                .Select(u => u with { Trusted = false }));
         }
         return servers;
     }

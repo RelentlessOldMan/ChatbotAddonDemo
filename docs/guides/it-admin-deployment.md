@@ -36,7 +36,7 @@ Add one subkey per server under `HKLM\Software\Policies\ChatbotAddonDemo\McpServ
 - `<name>` is the short name users see ("The assistant wants to use github") and the prefix of the tool names the model sees (`github_search_code`): up to 20 letters, digits or dashes. Your servers come first; a user's server with the same name is ignored, and Settings won't save one. Users see only the program or host of your servers, not the whole command line.
 - Addresses must use `https://` (plain `http://` only for this PC: localhost or 127.0.0.1). An entry that can't be used is skipped, and the chat says why.
 - **Approval:** tools from other servers ask the user before every use unless you set `Trusted=1`. The read-only labels such servers put on their own tools aren't trusted, and servers users add are never trusted.
-- Each server is started or contacted when the user sends their first message. One that doesn't answer within 30 seconds, or fails, is reported in the chat, and the chat carries on without it.
+- Each server is started or contacted when the user sends their first message. One that doesn't answer within 30 seconds, or fails, is reported in the chat, and the chat carries on without it. A tool whose inputs the AI providers wouldn't accept is left out the same way, and named.
 - **Coding agents never see these servers.** Agents connected to the app get only TestBench's own tools.
 - A command-line server runs as the user, with the user's rights, for as long as the chat panel is open. Only list servers you trust; consider `DisableUserMcpServers=1` where users shouldn't run their own.
 

@@ -27,6 +27,34 @@ public static class McpCapabilities
             $"{server.Name}: {OneLine(tool.ProtocolTool.Title ?? tool.Name)}")
         { Server = server.Name };
 
+    /// <summary>
+    /// Why the AI providers would refuse this tool's inputs, or null if they'd take them. Every tool goes out with every
+    /// message, so one tool a provider refuses would fail the whole chat, not just that tool. Checked: the inputs are
+    /// an object (both providers require it, and OpenAI refuses anyOf, oneOf, allOf, not or enum at the top), and
+    /// every list says what it holds (OpenAI refuses an array without items).
+    /// </summary>
+    internal static string? SchemaProblem(JsonElement schema)
+    {
+        if (schema.ValueKind != JsonValueKind.Object || !schema.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "object")
+            return "its inputs aren't described as an object";
+        foreach (var keyword in (string[])["anyOf", "oneOf", "allOf", "not", "enum"])
+            if (schema.TryGetProperty(keyword, out _)) return $"its inputs use '{keyword}' at the top level";
+        return ListWithoutItems(schema) ? "one of its inputs is a list that doesn't say what it holds" : null;
+    }
+
+    private static bool ListWithoutItems(JsonElement schema) => schema.ValueKind switch
+    {
+        JsonValueKind.Object =>
+            (schema.TryGetProperty("type", out var type) && IsArrayType(type) && !schema.TryGetProperty("items", out _))
+            || schema.EnumerateObject().Any(p => p.Name is not ("enum" or "const" or "default" or "examples") && ListWithoutItems(p.Value)),
+        JsonValueKind.Array => schema.EnumerateArray().Any(ListWithoutItems),
+        _ => false,
+    };
+
+    private static bool IsArrayType(JsonElement type) =>
+        type.ValueKind == JsonValueKind.String ? type.GetString() == "array"
+        : type.ValueKind == JsonValueKind.Array && type.EnumerateArray().Any(t => t.ValueKind == JsonValueKind.String && t.GetString() == "array");
+
     /// <summary>Someone else's title, made safe to show on an approval card: one line, so it can't pass for more card text.</summary>
     private static string OneLine(string title)
     {
