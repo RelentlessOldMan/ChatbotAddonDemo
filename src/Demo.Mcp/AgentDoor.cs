@@ -79,8 +79,8 @@ public sealed class AgentDoor : IAsyncDisposable
         var me = WindowsIdentity.GetCurrent().User!;
         security.AddAccessRule(new PipeAccessRule(me, PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
-        // The relay only connects to a pipe its own user owns (CurrentUserOnly). Without this, an app run as
-        // administrator would be owned by the Administrators group, and the user's relay would refuse it.
+        // The relay only connects to a pipe its own user owns (AgentRelay.ConnectToAppAsync). Without this, an app run
+        // as administrator would be owned by the Administrators group, and a relay that isn't would refuse it.
         security.SetOwner(me);
         return NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | (first ? PipeOptions.FirstPipeInstance : PipeOptions.None), 0, 0, security);

@@ -463,7 +463,7 @@ This connection has no approval gate of its own, because the chat session asks t
 Why a named pipe and a relay, not an HTTP server on `127.0.0.1`: a listening port has to be secured against every program and web page on the PC (bearer tokens, Host/Origin checks against DNS rebinding, token rotation). The pipe gets the same protection from Windows:
 
 - Its access list allows only the current Windows user and denies network logons, so other users and other computers can't connect.
-- The relay connects with `CurrentUserOnly`, so it never talks to a pipe another user set up to listen in.
+- The relay checks that the pipe is owned by its own Windows user before talking to it, so it never talks to a pipe another user set up to listen in. (It checks the owner itself rather than using `CurrentUserOnly`, which compares against the Administrators group for a program run as administrator, and so would refuse whenever the app and the agent differ in elevation.)
 - Only the first window can open the pipe name (`FirstPipeInstance`), so a second copy of the app reports the clash instead of sharing it.
 - The door is open only while the setting is on and the app is running; turning it off disconnects every agent.
 

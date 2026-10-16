@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.IO.Pipelines;
-using System.IO.Pipes;
 using System.Text.Json;
 using Demo.Ai;
 using Demo.Capabilities;
@@ -170,8 +169,7 @@ public sealed class HubTests : IAsyncDisposable
         Assert.Contains(chat.Catalog.Capabilities, c => c.Server == "github");
         var pipeName = $"ChatbotAddonDemo.Tests.{Guid.NewGuid():N}";
         await using var door = hub.OpenAgentDoor(pipeName, new NobodyAsks());
-        await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
-        await pipe.ConnectAsync(5000, Ct);
+        await using var pipe = await AgentRelay.ConnectToAppAsync(pipeName, TimeSpan.FromSeconds(5), Ct);
         await using var agent = await McpClient.CreateAsync(new StreamClientTransport(pipe, pipe), cancellationToken: Ct);
 
         var tools = await agent.ListToolsAsync(cancellationToken: Ct);

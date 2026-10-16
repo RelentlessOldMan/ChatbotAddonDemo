@@ -33,8 +33,7 @@ public sealed class AgentDoorTests : IAsyncDisposable
 
     private async Task<McpClient> ConnectAgent(string name = "claude-code")
     {
-        var pipe = new NamedPipeClientStream(".", _pipe, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-        await pipe.ConnectAsync(5000, Ct);
+        var pipe = await AgentRelay.ConnectToAppAsync(_pipe, TimeSpan.FromSeconds(5), Ct);
         var client = await McpClient.CreateAsync(new StreamClientTransport(pipe, pipe),
             new McpClientOptions { ClientInfo = new Implementation { Name = name, Version = "1" } }, cancellationToken: Ct);
         _cleanup.Add(pipe);

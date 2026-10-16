@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Runtime.Versioning;
+using System.Security.Principal;
 
 namespace Demo.Mcp;
 
@@ -18,17 +19,17 @@ public static class AgentRelay
     /// <returns>The process exit code: 0 when the agent or the app ended the conversation, 1 when the app wasn't there.</returns>
     public static async Task<int> RunAsync(string pipeName, Stream agentInput, Stream agentOutput, TextWriter errors, TimeSpan connectTimeout, CancellationToken cancellationToken = default)
     {
-        // CurrentUserOnly: only connect to a pipe this same Windows user created, never one another user set up to listen in.
-        await using var app = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        NamedPipeClientStream app;
         try
         {
-            await app.ConnectAsync(connectTimeout, cancellationToken);
+            app = await ConnectToAppAsync(pipeName, connectTimeout, cancellationToken);
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException)
         {
             await errors.WriteLineAsync(NotRunning);
             return 1;
         }
+        await using var _ = app;
 
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var toApp = CopyAsync(agentInput, app, stop.Token);
@@ -39,6 +40,32 @@ public static class AgentRelay
         if (toAgent.IsCompleted && !toApp.IsCompleted && !cancellationToken.IsCancellationRequested)
             await errors.WriteLineAsync("TestBench closed the connection (the app was closed, or coding agents were turned off).");
         return 0;
+    }
+
+    /// <summary>
+    /// Connects to the open app's pipe, but only one this same Windows user created, never one another user set up
+    /// under that name to listen in. Not <see cref="PipeOptions.CurrentUserOnly"/>: that compares the pipe's owner with
+    /// the token's default owner, which for a program run as administrator is the Administrators group, so it would
+    /// refuse whenever the app and the agent differ in elevation.
+    /// </summary>
+    /// <exception cref="UnauthorizedAccessException">Someone else owns the pipe.</exception>
+    internal static async Task<NamedPipeClientStream> ConnectToAppAsync(string pipeName, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var app = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try
+        {
+            await app.ConnectAsync(timeout, cancellationToken);
+            using var me = WindowsIdentity.GetCurrent();
+            var owner = app.GetAccessControl().GetOwner(typeof(SecurityIdentifier));
+            if (owner != me.User && owner != me.Owner)
+                throw new UnauthorizedAccessException("The TestBench pipe belongs to another Windows user.");
+            return app;
+        }
+        catch
+        {
+            await app.DisposeAsync();
+            throw;
+        }
     }
 
     private static async Task CopyAsync(Stream from, Stream to, CancellationToken cancellationToken)
